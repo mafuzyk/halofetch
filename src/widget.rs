@@ -2,10 +2,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::{FieldDef, PanelConfig};
 use crate::info::SysInfo;
-use crate::theme::Color;
 use crate::render::StyledSegment;
-
-const RESET: &str = "\x1b[0m";
+use crate::theme::Color;
 
 #[derive(Debug, Clone)]
 pub struct RenderCtx<'a> {
@@ -17,9 +15,7 @@ pub struct RenderCtx<'a> {
 
 #[derive(Debug, Clone)]
 pub struct WidgetOutput {
-    pub ansi: String,
     pub styled: Vec<StyledSegment>,
-    pub width: usize,
 }
 
 pub struct FieldWidget {
@@ -42,10 +38,10 @@ impl FieldWidget {
         let seg_vis = seg.width();
         let val_vis = val_text.width();
 
-        let sep_color = Color::from_hex_opt(&ctx.panel_cfg.sep_color)
-            .unwrap_or(Color::new(157, 133, 255));
-        let val_color = Color::from_hex_opt(&ctx.panel_cfg.val_color)
-            .unwrap_or(Color::new(245, 220, 227));
+        let sep_color =
+            Color::from_hex_opt(&ctx.panel_cfg.sep_color).unwrap_or(Color::new(157, 133, 255));
+        let val_color =
+            Color::from_hex_opt(&ctx.panel_cfg.val_color).unwrap_or(Color::new(245, 220, 227));
 
         let is_compact = ctx.panel_cfg.max_val_width <= 35;
         let sep_space = if is_compact { "" } else { " " };
@@ -70,44 +66,38 @@ impl FieldWidget {
             }
         }
 
-        let ansi = if val_text.trim().is_empty() {
-            format!(
-                "{}{} {}{}{}",
-                ctx.fg_color.fg_escape(),
-                seg,
-                sep_color.fg_escape(),
-                sep,
-                RESET,
-            )
-        } else {
-            format!(
-                "{}{}{}{}{}{}{}{}",
-                ctx.fg_color.fg_escape(),
-                seg,
-                sep_color.fg_escape(),
-                sep,
-                sep_space,
-                val_color.fg_escape(),
-                val_text.trim(),
-                RESET,
-            )
-        };
-
         let styled = if val_text.trim().is_empty() {
             vec![
-                StyledSegment { text: seg, fg: Some(ctx.fg_color), bg: None, bold: false },
-                StyledSegment { text: sep.into(), fg: Some(sep_color), bg: None, bold: false },
+                StyledSegment {
+                    text: seg,
+                    fg: Some(ctx.fg_color),
+                },
+                StyledSegment {
+                    text: sep.into(),
+                    fg: Some(sep_color),
+                },
             ]
         } else {
             vec![
-                StyledSegment { text: seg, fg: Some(ctx.fg_color), bg: None, bold: false },
-                StyledSegment { text: sep.into(), fg: Some(sep_color), bg: None, bold: false },
-                StyledSegment { text: sep_space.into(), fg: None, bg: None, bold: false },
-                StyledSegment { text: val_text.trim().into(), fg: Some(val_color), bg: None, bold: false },
+                StyledSegment {
+                    text: seg,
+                    fg: Some(ctx.fg_color),
+                },
+                StyledSegment {
+                    text: sep.into(),
+                    fg: Some(sep_color),
+                },
+                StyledSegment {
+                    text: sep_space.into(),
+                    fg: None,
+                },
+                StyledSegment {
+                    text: val_text.trim().into(),
+                    fg: Some(val_color),
+                },
             ]
         };
 
-        let width = crate::render::strip_ansi(&ansi).width();
-        WidgetOutput { ansi, styled, width }
+        WidgetOutput { styled }
     }
 }

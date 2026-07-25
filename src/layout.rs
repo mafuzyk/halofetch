@@ -18,14 +18,9 @@ pub enum AppLayout {
     Minimal,
     /// Like Centered but with extra spacing around the logo
     Balanced,
-    /// ASCII on the left, both panels stacked on the right (55-79 cols, e.g. phone landscape)
-    Mobile,
-    /// No ASCII, panels in single column (< 55 cols, e.g. phone portrait)
-    MobileNarrow,
 }
 
 impl AppLayout {
-
     pub fn pc_variants() -> &'static [AppLayout] {
         &[
             AppLayout::Centered,
@@ -36,13 +31,6 @@ impl AppLayout {
         ]
     }
 
-    pub fn mobile_variants() -> &'static [AppLayout] {
-        &[
-            AppLayout::Mobile,
-            AppLayout::MobileNarrow,
-        ]
-    }
-
     pub fn name(&self) -> &'static str {
         match self {
             AppLayout::Centered => "Centered",
@@ -50,8 +38,6 @@ impl AppLayout {
             AppLayout::Wide => "Wide",
             AppLayout::Minimal => "Minimal",
             AppLayout::Balanced => "Balanced",
-            AppLayout::Mobile => "Mobile",
-            AppLayout::MobileNarrow => "Mobile Narrow",
         }
     }
 
@@ -62,8 +48,6 @@ impl AppLayout {
             AppLayout::Wide => "Extra breathing room around elements",
             AppLayout::Minimal => "Panels only — no ASCII art",
             AppLayout::Balanced => "Like Centered with extra logo spacing",
-            AppLayout::Mobile => "ASCII left, panels stacked right — for phones",
-            AppLayout::MobileNarrow => "Single column panels — for narrow phones",
         }
     }
 
@@ -75,8 +59,6 @@ impl AppLayout {
             AppLayout::Wide => 4,
             AppLayout::Minimal => 2,
             AppLayout::Balanced => 3,
-            AppLayout::Mobile => 1,
-            AppLayout::MobileNarrow => 1,
         }
     }
 
@@ -88,8 +70,6 @@ impl AppLayout {
             AppLayout::Wide => 4,
             AppLayout::Minimal => 2,
             AppLayout::Balanced => 3,
-            AppLayout::Mobile => 1,
-            AppLayout::MobileNarrow => 1,
         }
     }
 

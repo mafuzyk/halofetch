@@ -9,11 +9,15 @@ pub struct AsciiComponent {
 }
 
 impl AsciiComponent {
-    pub fn new(art: String) -> Self { Self { art } }
+    pub fn new(art: String) -> Self {
+        Self { art }
+    }
 
     pub fn render_colored_lines(&self, ctx: &RenderCtx) -> (Vec<Vec<StyledSpan>>, usize) {
         let raw: Vec<&str> = self.art.lines().collect();
-        if raw.is_empty() { return (Vec::new(), 0); }
+        if raw.is_empty() {
+            return (Vec::new(), 0);
+        }
 
         let lines: Vec<String> = raw.iter().map(|l| l.trim_end().to_string()).collect();
         let max_w = lines.iter().map(|l| l.width()).max().unwrap_or(0);
@@ -30,8 +34,13 @@ impl AsciiComponent {
                 let flag_c = crate::theme::flag_color_at(cols, i, col, total, max_w, false);
                 let color = flag_c.unwrap_or_else(|| {
                     let idx = if is_vert { col } else { i };
-                    cols.get(crate::theme::stretch_index(idx, if is_vert { max_w } else { total }, cols.len()))
-                        .copied().unwrap_or(Color::new(255, 255, 255))
+                    cols.get(crate::theme::stretch_index(
+                        idx,
+                        if is_vert { max_w } else { total },
+                        cols.len(),
+                    ))
+                    .copied()
+                    .unwrap_or(Color::new(255, 255, 255))
                 });
                 if ch != ' ' {
                     spans.push(StyledSpan::new(ch.to_string()).fg(color));
@@ -51,16 +60,24 @@ impl AsciiComponent {
 }
 
 impl Component for AsciiComponent {
-    fn name(&self) -> &str { "ascii" }
+    fn name(&self) -> &str {
+        "ascii"
+    }
 
     fn render_ansi(&self, ctx: &RenderCtx) -> String {
         let styled = self.render_styled(ctx);
         let mut out = String::new();
         for line in styled {
             for s in &line {
-                if s.bold { out.push_str("\x1b[1m"); }
-                if let Some(fg) = &s.fg { out.push_str(&fg.fg_escape()); }
-                if let Some(bg) = &s.bg { out.push_str(&bg.bg_escape()); }
+                if s.bold {
+                    out.push_str("\x1b[1m");
+                }
+                if let Some(fg) = &s.fg {
+                    out.push_str(&fg.fg_escape());
+                }
+                if let Some(bg) = &s.bg {
+                    out.push_str(&bg.bg_escape());
+                }
                 out.push_str(&s.text);
                 out.push_str("\x1b[0m");
             }
@@ -71,7 +88,9 @@ impl Component for AsciiComponent {
 
     fn render_styled(&self, ctx: &RenderCtx) -> Vec<Vec<StyledSpan>> {
         let raw: Vec<&str> = self.art.lines().collect();
-        if raw.is_empty() { return Vec::new(); }
+        if raw.is_empty() {
+            return Vec::new();
+        }
 
         let lines: Vec<String> = raw.iter().map(|l| l.trim_end().to_string()).collect();
         let max_w = lines.iter().map(|l| l.width()).max().unwrap_or(0);
@@ -83,15 +102,22 @@ impl Component for AsciiComponent {
         let mut result = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let mut spans = Vec::new();
-            if center > 0 { spans.push(StyledSpan::new(" ".repeat(center))); }
+            if center > 0 {
+                spans.push(StyledSpan::new(" ".repeat(center)));
+            }
             let mut col = 0usize;
             for ch in line.chars() {
                 let w = ch.width().unwrap_or(0);
                 let flag_c = crate::theme::flag_color_at(cols, i, col, total, max_w, false);
                 let color = flag_c.unwrap_or_else(|| {
                     let idx = if is_vert { col } else { i };
-                    cols.get(crate::theme::stretch_index(idx, if is_vert { max_w } else { total }, cols.len()))
-                        .copied().unwrap_or(Color::new(255, 255, 255))
+                    cols.get(crate::theme::stretch_index(
+                        idx,
+                        if is_vert { max_w } else { total },
+                        cols.len(),
+                    ))
+                    .copied()
+                    .unwrap_or(Color::new(255, 255, 255))
                 });
                 if ch != ' ' {
                     spans.push(StyledSpan::new(ch.to_string()).fg(color));
@@ -111,10 +137,16 @@ impl Component for AsciiComponent {
     }
 
     fn min_width(&self) -> usize {
-        self.art.lines().map(|l| l.trim_end().width()).max().unwrap_or(0)
+        self.art
+            .lines()
+            .map(|l| l.trim_end().width())
+            .max()
+            .unwrap_or(0)
     }
     fn min_height(&self) -> usize {
         self.art.lines().count()
     }
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

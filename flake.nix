@@ -20,17 +20,14 @@
             lockFile = ./Cargo.lock;
           };
 
-          postInstall = ''
-            cp -r logos $out/bin/logos
-          '';
-
           meta = with pkgs.lib; {
             description = "A configurable fetch tool with centered ASCII art and powerline panels";
             longDescription = ''
               atlasfetch is a spiritual sibling of atlasWM — a Wayland compositor built
               around an infinite canvas. It displays system information with a centered
-              ASCII logo and powerline panels, supporting 25 color presets and 18 distro
-              logos. Compiled as a single Rust binary with zero runtime dependencies.
+              ASCII logo and powerline panels, with a live TUI editor, custom palettes,
+              four scenes, and more than 500 embedded logo variants. Compiled as a
+              single Rust binary with no language runtime dependency.
             '';
             homepage = "https://github.com/mafuzyk/atlasfetch";
             license = licenses.gpl3Plus;

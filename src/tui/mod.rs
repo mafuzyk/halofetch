@@ -1,17 +1,13 @@
 // TUI setup configurator — launched via `atlasfetch setup`.
 //
-// Built with ratatui + crossterm. Dispatches to PC or mobile TUI
-// depending on platform detection.
+// Built with ratatui + crossterm.
 
 mod editor;
-mod mobile;
+mod events;
+mod state;
 
 use color_eyre::Result;
 
 pub fn run(cfg: &mut crate::config::Config) -> Result<()> {
-    if crate::info::is_android() {
-        mobile::run(cfg)
-    } else {
-        editor::run(cfg)
-    }
+    editor::run(cfg)
 }
