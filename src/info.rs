@@ -6,20 +6,24 @@
 // format mid-render.
 
 use color_eyre::Result;
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
-pub fn is_android() -> bool {
-    if std::env::var("TERMUX_VERSION").is_ok() {
-        return true;
-    }
-    if Path::new("/system/build.prop").exists() {
-        return true;
-    }
-    false
-}
+static CPU_CORE_SUFFIX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\s+\d+-Core(?:\s+Processor|\s+APU)?$")
+        .expect("CPU suffix regex is a compile-time constant")
+});
+static CPU_TYPE_SUFFIX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\s+(?:Processor|APU)$").expect("CPU type regex is a compile-time constant")
+});
+static GPU_TYPE_SUFFIX: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\s+(?:Series|Graphics)$")
+        .expect("GPU suffix regex is a compile-time constant")
+});
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SysInfo {
     pub os: String,
     pub host: String,
@@ -111,84 +115,68 @@ impl SysInfo {
             _ => None,
         }
     }
-
 }
 
 pub fn collect() -> Result<SysInfo> {
-    let mut info = SysInfo::default();
+    let uptime = format_uptime();
+    let info = SysInfo {
+        user: std::env::var("USER").unwrap_or_else(|_| whoami_fallback()),
+        host: hostname(),
+        os: detect_os(),
+        kernel: read_kernel(),
+        uptime,
+        shell: detect_shell(),
+        terminal: detect_terminal(),
+        cpu: read_cpu(),
+        gpu: read_gpu(),
+        memory: format_memory(),
+        disk: format_disk("/"),
+        wm: detect_wm(),
+        load: read_load(),
+        processes: count_processes(),
+        packages: count_packages(),
+        local_ip: local_ip(),
+        resolution: detect_resolution(),
+        de: detect_de(),
+        font: detect_font(),
+        vram: read_vram(),
+        flatpak: count_flatpak(),
+        snap: count_snap(),
+        arch: read_arch(),
+        device: read_device_model(),
+        battery_level: read_battery_level(),
+        battery_temp: read_battery_temp(),
+        battery_health: read_battery_health(),
+        battery_status: read_battery_status(),
+        cpu_temp: read_cpu_temp(),
+        brightness: read_brightness(),
+        refresh_rate: read_refresh_rate(),
+        signal: read_signal(),
+        wifi_ssid: read_wifi_ssid(),
+        ..SysInfo::default()
+    };
+    Ok(info)
+}
 
-    info.user = std::env::var("USER").unwrap_or_else(|_| whoami_fallback());
-    info.host = hostname();
-    info.os = detect_os();
-    info.kernel = read_kernel();
+/// Refresh fields that can materially change during a live monitor session.
+/// Expensive stable discovery (packages, GPU model, fonts, desktop) stays out
+/// of the hot path.
+pub fn refresh_live(info: &mut SysInfo) {
     info.uptime = format_uptime();
-    info.shell = detect_shell();
-    info.terminal = detect_terminal();
-    info.cpu = read_cpu();
-    info.gpu = read_gpu();
     info.memory = format_memory();
     info.disk = format_disk("/");
-    info.wm = detect_wm();
     info.load = read_load();
     info.processes = count_processes();
-    info.packages = count_packages();
-    info.local_ip = local_ip();
-    info.resolution = detect_resolution();
-    info.de = detect_de();
-    info.font = detect_font();
-    info.vram = read_vram();
-    info.flatpak = count_flatpak();
-    info.snap = count_snap();
-    info.arch = read_arch();
-    info.soc = read_cpu();
-    info.device = read_device_model();
     info.battery_level = read_battery_level();
     info.battery_temp = read_battery_temp();
     info.battery_health = read_battery_health();
     info.battery_status = read_battery_status();
     info.cpu_temp = read_cpu_temp();
-    info.brightness = read_brightness();
-    info.refresh_rate = read_refresh_rate();
-    info.signal = read_signal();
-    info.wifi_ssid = read_wifi_ssid();
-    if is_android() {
-        info.rom = read_rom();
-        info.root_status = detect_root();
-        info.bootloader = read_bootloader();
-        info.selinux = read_selinux();
-        info.storage = format_android_storage();
-        info.security_patch = read_security_patch();
-    }
-    info.uptime_days = info.uptime.clone();
-
-    Ok(info)
 }
 
 // ── OS detection ─────────────────────────────────────────────────────────
 
 fn detect_os() -> String {
-    if is_android() {
-        if let Ok(content) = fs::read_to_string("/system/build.prop") {
-            let mut release = String::new();
-            let mut sdk = String::new();
-            for line in content.lines() {
-                if let Some(val) = line.strip_prefix("ro.build.version.release=") {
-                    release = val.trim().to_string();
-                }
-                if let Some(val) = line.strip_prefix("ro.build.version.sdk=") {
-                    sdk = val.trim().to_string();
-                }
-            }
-            if !release.is_empty() && !sdk.is_empty() {
-                return format!("Android {} (API {})", release, sdk);
-            }
-            if !release.is_empty() {
-                return format!("Android {}", release);
-            }
-        }
-        return "Android".into();
-    }
-
     for path in &["/etc/os-release", "/usr/lib/os-release"] {
         if let Ok(content) = fs::read_to_string(path) {
             for line in content.lines() {
@@ -233,12 +221,7 @@ fn whoami_fallback() -> String {
 fn read_kernel() -> String {
     fs::read_to_string("/proc/version")
         .ok()
-        .map(|s| {
-            s.split_whitespace()
-                .nth(2)
-                .unwrap_or("unknown")
-                .to_string()
-        })
+        .map(|s| s.split_whitespace().nth(2).unwrap_or("unknown").to_string())
         .unwrap_or_else(|| "unknown".into())
 }
 
@@ -255,8 +238,12 @@ fn format_uptime() -> String {
     let m = (secs % 3600) / 60;
 
     let mut parts = Vec::new();
-    if d > 0 { parts.push(format!("{}d", d)); }
-    if h > 0 { parts.push(format!("{}h", h)); }
+    if d > 0 {
+        parts.push(format!("{}d", d));
+    }
+    if h > 0 {
+        parts.push(format!("{}h", h));
+    }
     parts.push(format!("{}m", m));
     parts.join(" ")
 }
@@ -266,17 +253,14 @@ fn format_uptime() -> String {
 fn detect_shell() -> String {
     std::env::var("SHELL")
         .ok()
-        .and_then(|s| {
-            s.rsplit('/').next().map(|s| s.to_string())
-        })
+        .and_then(|s| s.rsplit('/').next().map(|s| s.to_string()))
         .unwrap_or_else(|| "sh".into())
 }
 
 // ── Terminal ─────────────────────────────────────────────────────────────
 
 fn detect_terminal() -> String {
-    std::env::var("TERM")
-        .unwrap_or_else(|_| "unknown".into())
+    std::env::var("TERM").unwrap_or_else(|_| "unknown".into())
 }
 
 // ── CPU ──────────────────────────────────────────────────────────────────
@@ -290,7 +274,7 @@ fn read_cpu() -> String {
     let mut model = String::new();
     let mut cores = 0u32;
 
-    // On ARM/Android, "Hardware" line contains the SoC name
+    // On ARM systems, "Hardware" line contains the SoC name
     // On x86, "model name" contains the CPU model
     // Also try "Processor" (ARM)
     for line in content.lines() {
@@ -321,19 +305,6 @@ fn read_cpu() -> String {
         }
         if line.starts_with("processor") {
             cores += 1;
-        }
-    }
-
-    // On Android, also try reading the CPU part from device tree
-    if model.is_empty() && is_android() {
-        if let Ok(compat) = fs::read_to_string("/proc/device-tree/compatible") {
-            let parts: Vec<&str> = compat.split('\0').collect();
-            if let Some(first) = parts.first() {
-                let trimmed = first.trim();
-                if !trimmed.is_empty() {
-                    model = trimmed.to_string();
-                }
-            }
         }
     }
 
@@ -378,13 +349,10 @@ fn shorten_cpu(name: &str) -> String {
 
     // Strip trailing "N-Core Processor", "N-Core APU", or just "N-Core"
     // e.g., "AMD Ryzen 5 5600X 6-Core Processor" → "AMD Ryzen 5 5600X"
-    let re1 = regex::Regex::new(r"\s+\d+-Core(?:\s+Processor|\s+APU)?$").unwrap();
-    let name = re1.replace(name, "");
+    let name = CPU_CORE_SUFFIX.replace(name, "");
 
     // Strip trailing " Processor" or " APU" (left after Core removal)
-    let name = regex::Regex::new(r"\s+(?:Processor|APU)$")
-        .unwrap()
-        .replace(&name, "");
+    let name = CPU_TYPE_SUFFIX.replace(&name, "");
 
     name.trim().to_string()
 }
@@ -398,9 +366,7 @@ fn shorten_gpu(name: &str) -> String {
     // AMD: "AMD Radeon RX 570 Series" → "AMD RX 570"
     let name = name.replace("Radeon ", "");
     // Strip trailing " Series", " Graphics"
-    let name = regex::Regex::new(r"\s+(?:Series|Graphics)$")
-        .unwrap()
-        .replace(&name, "");
+    let name = GPU_TYPE_SUFFIX.replace(&name, "");
 
     name.trim().to_string()
 }
@@ -486,8 +452,8 @@ fn read_gpu() -> String {
         }
     }
 
-    if is_android() {
-        // Qualcomm Adreno — kgsl
+    if Path::new("/sys/class/kgsl/kgsl-3d0").exists() {
+        // Qualcomm Adreno via KGSL
         let kgsl_path = Path::new("/sys/class/kgsl/kgsl-3d0");
         if kgsl_path.exists() {
             if let Ok(model) = fs::read_to_string(kgsl_path.join("gpu_model")) {
@@ -580,10 +546,20 @@ fn format_memory() -> String {
 
     for line in content.lines() {
         if let Some(val) = line.strip_prefix("MemTotal:") {
-            total_kb = val.trim().split_whitespace().next().unwrap_or("0").parse().unwrap_or(0);
+            total_kb = val
+                .split_whitespace()
+                .next()
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
         }
         if let Some(val) = line.strip_prefix("MemAvailable:") {
-            avail_kb = val.trim().split_whitespace().next().unwrap_or("0").parse().unwrap_or(0);
+            avail_kb = val
+                .split_whitespace()
+                .next()
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
         }
     }
 
@@ -601,7 +577,7 @@ fn format_memory() -> String {
 // ── Disk ─────────────────────────────────────────────────────────────────
 
 fn format_disk(mount: &str) -> String {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     {
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         let cpath = std::ffi::CString::new(mount).unwrap_or_default();
@@ -680,11 +656,15 @@ fn detect_de() -> String {
     // Check known DE-specific env vars in priority order
     if let Ok(val) = std::env::var("XDG_CURRENT_DESKTOP") {
         let de = val.trim().to_string();
-        if !de.is_empty() { return de; }
+        if !de.is_empty() {
+            return de;
+        }
     }
     if let Ok(val) = std::env::var("DESKTOP_SESSION") {
         let de = val.trim().to_string();
-        if !de.is_empty() { return de; }
+        if !de.is_empty() {
+            return de;
+        }
     }
     if std::env::var("GNOME_DESKTOP_SESSION_ID").is_ok() {
         return "GNOME".into();
@@ -697,9 +677,19 @@ fn detect_de() -> String {
     }
     // Detect via process name matching (same approach as detect_wm)
     let de_procs = &[
-        "gnome-shell", "plasmashell", "xfce4-session", "mate-session",
-        "lxqt-session", "lxpanel", "cinnamon-session", "budgie-wm",
-        "deepin-wm", "enlightenment", "openbox", "fluxbox", "i3",
+        "gnome-shell",
+        "plasmashell",
+        "xfce4-session",
+        "mate-session",
+        "lxqt-session",
+        "lxpanel",
+        "cinnamon-session",
+        "budgie-wm",
+        "deepin-wm",
+        "enlightenment",
+        "openbox",
+        "fluxbox",
+        "i3",
     ];
     if let Ok(proc) = fs::read_dir("/proc") {
         for entry in proc.flatten() {
@@ -733,9 +723,7 @@ fn detect_de() -> String {
 fn read_load() -> String {
     fs::read_to_string("/proc/loadavg")
         .ok()
-        .and_then(|s| {
-            s.split_whitespace().next().map(|v| v.to_string())
-        })
+        .and_then(|s| s.split_whitespace().next().map(|v| v.to_string()))
         .unwrap_or_else(|| "?".into())
 }
 
@@ -762,142 +750,57 @@ fn count_processes() -> String {
 // ── Packages ─────────────────────────────────────────────────────────────
 
 fn count_packages() -> String {
-    if is_android() {
-        if let Ok(out) = std::process::Command::new("apt")
-            .args(["list", "--installed"])
-            .output()
-        {
-            if out.status.success() {
-                let count = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .filter(|l| l.contains('/'))
-                    .count();
+    let pacman = Path::new("/var/lib/pacman/local");
+    if let Ok(entries) = fs::read_dir(pacman) {
+        let count = entries
+            .flatten()
+            .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+            .count();
+        if count > 0 {
+            return count.to_string();
+        }
+    }
+
+    if let Ok(status) = fs::read_to_string("/var/lib/dpkg/status") {
+        let count = status
+            .lines()
+            .filter(|line| *line == "Status: install ok installed")
+            .count();
+        if count > 0 {
+            return count.to_string();
+        }
+    }
+
+    for (program, arguments) in [
+        ("rpm", &["-qa"][..]),
+        ("xbps-query", &["-l"][..]),
+        ("nix-store", &["-qR", "/run/current-system/sw"][..]),
+    ] {
+        if let Ok(output) = std::process::Command::new(program).args(arguments).output() {
+            if output.status.success() {
+                let count = String::from_utf8_lossy(&output.stdout).lines().count();
                 if count > 0 {
                     return count.to_string();
                 }
             }
         }
-        // Fallback: try dpkg-query
-        if let Ok(out) = std::process::Command::new("dpkg-query")
-            .args(["-f", ".\\n", "-W"])
-            .output()
-        {
-            if out.status.success() {
-                let count = String::from_utf8_lossy(&out.stdout).lines().count();
-                if count > 0 {
-                    return count.to_string();
-                }
-            }
+    }
+
+    if let Ok(world) = fs::read_to_string("/var/lib/portage/world") {
+        let count = world.lines().filter(|line| !line.trim().is_empty()).count();
+        if count > 0 {
+            return count.to_string();
         }
     }
 
-    let mut counts: Vec<String> = Vec::new();
-
-    // pacman
-    if let Ok(out) = std::process::Command::new("pacman")
-        .args(["-Qq", "--color", "never"])
-        .output()
-    {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            if count > 0 {
-                counts.push(format!("{} (pacman)", count));
-            }
-        }
-    }
-
-    // dpkg
-    if let Ok(out) = std::process::Command::new("dpkg-query")
-        .args(["-f", ".\\n", "-W"])
-        .output()
-    {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            if count > 0 {
-                counts.push(format!("{} (dpkg)", count));
-            }
-        }
-    }
-
-    // rpm
-    if let Ok(out) = std::process::Command::new("rpm").args(["-qa"]).output() {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            if count > 0 {
-                counts.push(format!("{} (rpm)", count));
-            }
-        }
-    }
-
-    // xbps
-    if let Ok(out) = std::process::Command::new("xbps-query")
-        .args(["-l"])
-        .output()
-    {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            if count > 0 {
-                counts.push(format!("{} (xbps)", count));
-            }
-        }
-    }
-
-    // emerge (gentoo)
-    let world_path = Path::new("/var/lib/portage/world");
-    if world_path.exists() {
-        if let Ok(content) = fs::read_to_string(world_path) {
-            let count = content.lines().count();
-            if count > 0 {
-                counts.push(format!("{} (emerge)", count));
-            }
-        }
-    }
-
-    // nix
-    if let Ok(out) = std::process::Command::new("nix-store")
-        .args(["-qR", "/run/current-system/sw"])
-        .output()
-    {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            if count > 0 {
-                counts.push(format!("{} (nix)", count));
-            }
-        }
-    }
-
-    // flatpak
-    if let Ok(out) = std::process::Command::new("flatpak")
-        .args(["list"])
-        .output()
-    {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            // flatpak has a header line
-            let count = count.saturating_sub(1);
-            if count > 0 {
-                counts.push(format!("{} (flatpak)", count));
-            }
-        }
-    }
-
-    if counts.is_empty() {
-        return "—".into();
-    }
-
-    let total: usize = counts
-        .iter()
-        .filter_map(|s| s.split_whitespace().next()?.parse::<usize>().ok())
-        .sum();
-
-    format!("{}", total)
+    "—".into()
 }
 
 // ── VRAM ─────────────────────────────────────────────────────────────────
 
 fn read_vram() -> String {
-    if is_android() {
-        // Qualcomm Adreno — kgsl
+    if Path::new("/sys/class/kgsl/kgsl-3d0").exists() {
+        // Qualcomm Adreno via KGSL
         let kgsl_path = Path::new("/sys/class/kgsl/kgsl-3d0");
         if kgsl_path.exists() {
             // Try dedicated VRAM size
@@ -909,7 +812,12 @@ fn read_vram() -> String {
             if let Ok(content) = fs::read_to_string("/proc/meminfo") {
                 for line in content.lines() {
                     if let Some(val) = line.strip_prefix("MemTotal:") {
-                        let kb: u64 = val.trim().split_whitespace().next().unwrap_or("0").parse().unwrap_or(0);
+                        let kb: u64 = val
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("0")
+                            .parse()
+                            .unwrap_or(0);
                         if kb > 0 {
                             let gb = kb as f64 / 1_048_576.0;
                             return format!("Shared {:.1}G", gb);
@@ -951,7 +859,6 @@ fn count_flatpak() -> String {
     {
         if out.status.success() {
             let count = String::from_utf8_lossy(&out.stdout).lines().count();
-            let count = count.saturating_sub(1);
             if count > 0 {
                 return count.to_string();
             }
@@ -978,53 +885,7 @@ fn count_snap() -> String {
 // ── Resolution ───────────────────────────────────────────────────────────
 
 fn detect_resolution() -> String {
-    if is_android() {
-        if let Ok(out) = std::process::Command::new("wm").args(["size"]).output() {
-            if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                for line in stdout.lines() {
-                    if let Some(size) = line.strip_prefix("Physical size: ") {
-                        return size.trim().to_string();
-                    }
-                }
-            }
-        }
-        // Fallback: read from build.prop
-        if let Ok(content) = fs::read_to_string("/system/build.prop") {
-            for line in content.lines() {
-                if line.contains("ro.sf.lcd_density") || line.contains("ro.opengles.version") {
-                    // These don't give resolution directly, continue
-                }
-            }
-        }
-        // Try reading from sysfs graphics
-        let fb_path = Path::new("/sys/class/graphics/fb0");
-        if fb_path.exists() {
-            let mut w = None;
-            let mut h = None;
-            if let Ok(virtual_size) = fs::read_to_string(fb_path.join("virtual_size")) {
-                let parts: Vec<&str> = virtual_size.trim().split(',').collect();
-                if parts.len() >= 2 {
-                    w = parts[0].parse::<u32>().ok();
-                    h = parts[1].parse::<u32>().ok();
-                }
-            }
-            if w.is_none() || h.is_none() {
-                if let Ok(xres) = fs::read_to_string(fb_path.join("xres")) {
-                    w = xres.trim().parse::<u32>().ok();
-                }
-                if let Ok(yres) = fs::read_to_string(fb_path.join("yres")) {
-                    h = yres.trim().parse::<u32>().ok();
-                }
-            }
-            if let (Some(w), Some(h)) = (w, h) {
-                return format!("{}x{}", w, h);
-            }
-        }
-        return String::new();
-    }
-
-    // Linux: try reading from DRM
+    // Read the first connected mode exposed by DRM
     let drm_path = Path::new("/sys/class/drm");
     if let Ok(entries) = fs::read_dir(drm_path) {
         for entry in entries.flatten() {
@@ -1087,7 +948,12 @@ fn detect_font() -> String {
         for line in content.lines() {
             let line = line.trim();
             if line.starts_with("family:") {
-                return line.strip_prefix("family:").unwrap().trim().trim_matches('"').to_string();
+                return line
+                    .strip_prefix("family:")
+                    .unwrap()
+                    .trim()
+                    .trim_matches('"')
+                    .to_string();
             }
         }
     }
@@ -1095,7 +961,12 @@ fn detect_font() -> String {
         for line in content.lines() {
             let line = line.trim();
             if line.starts_with("family =") {
-                return line.strip_prefix("family =").unwrap().trim().trim_matches('"').to_string();
+                return line
+                    .strip_prefix("family =")
+                    .unwrap()
+                    .trim()
+                    .trim_matches('"')
+                    .to_string();
             }
         }
     }
@@ -1156,16 +1027,27 @@ fn detect_font() -> String {
 
     // GNOME Terminal — resolve profile UUID then read font
     if let Ok(out) = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.Terminal.ProfilesList", "default"]).output()
+        .args(["get", "org.gnome.Terminal.ProfilesList", "default"])
+        .output()
     {
-        let uuid = String::from_utf8_lossy(&out.stdout).trim().trim_matches('\'').to_string();
+        let uuid = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .trim_matches('\'')
+            .to_string();
         if !uuid.is_empty() {
             let path = format!("/org/gnome/terminal/legacy/profiles:/:{}/", uuid);
             if let Ok(fout) = std::process::Command::new("gsettings")
-                .args(["get", &format!("org.gnome.Terminal.Legacy.Profile:{}", path), "font"])
+                .args([
+                    "get",
+                    &format!("org.gnome.Terminal.Legacy.Profile:{}", path),
+                    "font",
+                ])
                 .output()
             {
-                let font = String::from_utf8_lossy(&fout.stdout).trim().trim_matches('\'').to_string();
+                let font = String::from_utf8_lossy(&fout.stdout)
+                    .trim()
+                    .trim_matches('\'')
+                    .to_string();
                 if !font.is_empty() && font != "@as" {
                     return font;
                 }
@@ -1195,7 +1077,7 @@ fn detect_font() -> String {
     String::new()
 }
 
-// ── Android / Mobile info ────────────────────────────────────────────────
+// ── Hardware and sensor information ─────────────────────────────────────
 
 fn read_arch() -> String {
     if let Ok(out) = std::process::Command::new("uname").arg("-m").output() {
@@ -1208,53 +1090,49 @@ fn read_arch() -> String {
 
 fn read_device_model() -> String {
     // PC: DMI product name
-    for dmi in &["/sys/class/dmi/id/product_name", "/sys/devices/virtual/dmi/id/product_name"] {
+    for dmi in &[
+        "/sys/class/dmi/id/product_name",
+        "/sys/devices/virtual/dmi/id/product_name",
+    ] {
         if let Ok(content) = fs::read_to_string(dmi) {
             let name = content.trim().to_string();
-            if !name.is_empty() && name != "System Product Name" && name != "To Be Filled By O.E.M." {
+            if !name.is_empty() && name != "System Product Name" && name != "To Be Filled By O.E.M."
+            {
                 return name;
             }
         }
     }
-    // Android: getprop
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.product.model").output() {
+    // ARM/Linux: getprop
+    if let Ok(out) = std::process::Command::new("getprop")
+        .arg("ro.product.model")
+        .output()
+    {
         if out.status.success() {
             let model = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !model.is_empty() { return model; }
-        }
-    }
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.product.marketname").output() {
-        if out.status.success() {
-            let model = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !model.is_empty() { return model; }
-        }
-    }
-    String::new()
-}
-
-fn read_rom() -> String {
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.build.description").output() {
-        if out.status.success() {
-            let desc = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !desc.is_empty() {
-                if let Some(name) = desc.split_whitespace().next() {
-                    return name.to_string();
-                }
-                return desc;
+            if !model.is_empty() {
+                return model;
             }
         }
     }
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.build.display.id").output() {
+    if let Ok(out) = std::process::Command::new("getprop")
+        .arg("ro.product.marketname")
+        .output()
+    {
         if out.status.success() {
-            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !id.is_empty() { return id; }
+            let model = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !model.is_empty() {
+                return model;
+            }
         }
     }
     String::new()
 }
 
 fn read_battery_level() -> String {
-    for psu in &["/sys/class/power_supply/BAT0", "/sys/class/power_supply/battery"] {
+    for psu in &[
+        "/sys/class/power_supply/BAT0",
+        "/sys/class/power_supply/battery",
+    ] {
         let cap = Path::new(psu).join("capacity");
         if let Ok(content) = fs::read_to_string(&cap) {
             let level = content.trim().to_string();
@@ -1267,7 +1145,10 @@ fn read_battery_level() -> String {
 }
 
 fn read_battery_temp() -> String {
-    for psu in &["/sys/class/power_supply/BAT0", "/sys/class/power_supply/battery"] {
+    for psu in &[
+        "/sys/class/power_supply/BAT0",
+        "/sys/class/power_supply/battery",
+    ] {
         let temp_path = Path::new(psu).join("temp");
         if let Ok(content) = fs::read_to_string(&temp_path) {
             if let Ok(raw) = content.trim().parse::<f64>() {
@@ -1276,8 +1157,8 @@ fn read_battery_temp() -> String {
         }
     }
     // Alternative: thermal zone
-    for entry in fs::read_dir("/sys/class/thermal").unwrap_or_else(|_| fs::read_dir("/dev/null").unwrap()) {
-        if let Ok(entry) = entry {
+    if let Ok(entries) = fs::read_dir("/sys/class/thermal") {
+        for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.contains("battery") || name.contains("temp") {
                 if let Ok(content) = fs::read_to_string(entry.path().join("temp")) {
@@ -1292,123 +1173,31 @@ fn read_battery_temp() -> String {
 }
 
 fn read_battery_health() -> String {
-    for psu in &["/sys/class/power_supply/BAT0", "/sys/class/power_supply/battery"] {
+    for psu in &[
+        "/sys/class/power_supply/BAT0",
+        "/sys/class/power_supply/battery",
+    ] {
         let health_path = Path::new(psu).join("health");
         if let Ok(content) = fs::read_to_string(&health_path) {
             let h = content.trim().to_string();
-            if !h.is_empty() && h != "Unknown" { return h; }
+            if !h.is_empty() && h != "Unknown" {
+                return h;
+            }
         }
     }
     String::new()
 }
 
 fn read_battery_status() -> String {
-    for psu in &["/sys/class/power_supply/BAT0", "/sys/class/power_supply/battery"] {
+    for psu in &[
+        "/sys/class/power_supply/BAT0",
+        "/sys/class/power_supply/battery",
+    ] {
         let status_path = Path::new(psu).join("status");
         if let Ok(content) = fs::read_to_string(&status_path) {
             let s = content.trim().to_string();
-            if !s.is_empty() { return s; }
-        }
-    }
-    String::new()
-}
-
-fn detect_root() -> String {
-    // Check for su binary
-    for path in &["/system/bin/su", "/system/xbin/su", "/su/bin/su", "/data/adb/magisk"] {
-        if Path::new(path).exists() {
-            // Detect Magisk specifically
-            if Path::new("/data/adb/magisk").exists() || std::process::Command::new("magisk").arg("-c").output().is_ok() {
-                return "Magisk active".into();
-            }
-            if Path::new("/data/adb/apatch").exists() {
-                return "APatch active".into();
-            }
-            if Path::new("/data/adb/ksu").exists() {
-                return "KernelSU active".into();
-            }
-            return "Rooted (su)".into();
-        }
-    }
-    // Check if we can run a command as root
-    if std::process::Command::new("su").arg("-c").arg("id").output().is_ok() {
-        return "su available".into();
-    }
-    String::new()
-}
-
-fn read_bootloader() -> String {
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.boot.verifiedbootstate").output() {
-        if out.status.success() {
-            let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            match state.as_str() {
-                "orange" => return "Unlocked".into(),
-                "green" => return "Locked".into(),
-                "yellow" => return "Warning".into(),
-                _ => if !state.is_empty() { return state; }
-            }
-        }
-    }
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.boot.flash.locked").output() {
-        if out.status.success() {
-            match String::from_utf8_lossy(&out.stdout).trim() {
-                "0" => return "Unlocked".into(),
-                "1" => return "Locked".into(),
-                _ => {}
-            }
-        }
-    }
-    String::new()
-}
-
-fn read_selinux() -> String {
-    let path = Path::new("/proc/1/attr/current");
-    if let Ok(content) = fs::read_to_string(path) {
-        if content.contains("enforce") { return "Enforcing".into(); }
-        if content.contains("permissive") || content.contains("unconfined") {
-            return "Permissive".into();
-        }
-    }
-    // Try getprop
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.build.selinux").output() {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !s.is_empty() { return s; }
-        }
-    }
-    String::new()
-}
-
-fn format_android_storage() -> String {
-    // Try /proc/partitions for a quick overview
-    if let Ok(content) = fs::read_to_string("/proc/partitions") {
-        let mut total_blocks: u64 = 0;
-        for line in content.lines().skip(2) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 4 {
-                let name = parts[3];
-                // Skip loop, zram, ram
-                if name.starts_with("loop") || name.starts_with("zram") || name.starts_with("ram") {
-                    continue;
-                }
-                if let Ok(blocks) = parts[2].parse::<u64>() {
-                    total_blocks += blocks;
-                }
-            }
-        }
-        if total_blocks > 0 {
-            let gb = total_blocks as f64 * 1024.0 / 1_073_741_824.0;
-            return format!("{:.0}G", gb);
-        }
-    }
-    // Fallback: read from /proc/mounts for /data
-    if let Ok(content) = fs::read_to_string("/proc/mounts") {
-        for line in content.lines() {
-            if line.starts_with("/data") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 && parts[2] != "f2fs" && parts[2] != "ext4" {
-                    continue;
-                }
+            if !s.is_empty() {
+                return s;
             }
         }
     }
@@ -1449,8 +1238,12 @@ fn read_brightness() -> String {
             } else {
                 dir.join("brightness")
             };
-            if let (Ok(max_str), Ok(cur_str)) = (fs::read_to_string(&max_path), fs::read_to_string(&cur_path)) {
-                if let (Ok(max), Ok(cur)) = (max_str.trim().parse::<f64>(), cur_str.trim().parse::<f64>()) {
+            if let (Ok(max_str), Ok(cur_str)) =
+                (fs::read_to_string(&max_path), fs::read_to_string(&cur_path))
+            {
+                if let (Ok(max), Ok(cur)) =
+                    (max_str.trim().parse::<f64>(), cur_str.trim().parse::<f64>())
+                {
                     if max > 0.0 {
                         return format!("{:.0}%", (cur / max) * 100.0);
                     }
@@ -1466,7 +1259,9 @@ fn read_refresh_rate() -> String {
     if let Ok(entries) = fs::read_dir("/sys/class/drm") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.contains('-') { continue; }
+            if !name.contains('-') {
+                continue;
+            }
             let modes_path = entry.path().join("modes");
             if let Ok(content) = fs::read_to_string(&modes_path) {
                 for mode in content.lines() {
@@ -1491,8 +1286,15 @@ fn read_signal() -> String {
             if parts.len() >= 4 {
                 if let Ok(level) = parts[3].parse::<f64>() {
                     if level < 0.0 {
-                        let bars = if level > -50.0 { 4 } else if level > -65.0 { 3 }
-                                   else if level > -80.0 { 2 } else { 1 };
+                        let bars = if level > -50.0 {
+                            4
+                        } else if level > -65.0 {
+                            3
+                        } else if level > -80.0 {
+                            2
+                        } else {
+                            1
+                        };
                         return format!("{}/4 ({}dBm)", bars, level as i64);
                     }
                 }
@@ -1507,17 +1309,9 @@ fn read_wifi_ssid() -> String {
     if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
         if out.status.success() {
             let ssid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !ssid.is_empty() { return ssid; }
-        }
-    }
-    String::new()
-}
-
-fn read_security_patch() -> String {
-    if let Ok(out) = std::process::Command::new("getprop").arg("ro.build.version.security_patch").output() {
-        if out.status.success() {
-            let patch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !patch.is_empty() { return patch; }
+            if !ssid.is_empty() {
+                return ssid;
+            }
         }
     }
     String::new()
@@ -1530,7 +1324,10 @@ mod tests {
     #[test]
     fn test_shorten_cpu() {
         let cases = vec![
-            ("AMD Ryzen 3 2200G with Radeon Vega Graphics", "AMD Ryzen 3 2200G"),
+            (
+                "AMD Ryzen 3 2200G with Radeon Vega Graphics",
+                "AMD Ryzen 3 2200G",
+            ),
             ("AMD Ryzen 5 5600X 6-Core Processor", "AMD Ryzen 5 5600X"),
             ("AMD Ryzen 7 5800X3D", "AMD Ryzen 7 5800X3D"),
             ("AMD EPYC 7551P 32-Core Processor", "AMD EPYC 7551P"),

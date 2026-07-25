@@ -7,22 +7,32 @@
 // On first run, logos are copied from the binary's adjacent logos/ directory
 // into the user's config directory so that updates don't break existing configs.
 
+use crate::config;
 use color_eyre::Result;
 use std::fs;
 use std::path::PathBuf;
-use crate::config;
 
 include!(concat!(env!("OUT_DIR"), "/logos_generated.rs"));
 
 fn clean_ascii(art: &str) -> String {
     let lines: Vec<&str> = art.lines().collect();
-    if lines.is_empty() { return String::new(); }
-    // Minimum leading U+2800 blanks across all non-empty lines
-    let min_lead = lines.iter()
+    if lines.is_empty() {
+        return String::new();
+    }
+    // Remove only indentation shared by every visible line. Both ordinary
+    // spaces and U+2800 Braille blanks occur in community logo files.
+    let min_lead = lines
+        .iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| l.chars().take_while(|&c| c == '\u{2800}').count())
-        .min().unwrap_or(0);
-    lines.iter()
+        .map(|l| {
+            l.chars()
+                .take_while(|&c| c == ' ' || c == '\u{2800}')
+                .count()
+        })
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
         .map(|l| {
             let s: String = l.chars().skip(min_lead).collect();
             s.trim_end().to_string()
@@ -182,5 +192,17 @@ fn default_ascii() -> String {
    `/ossssso+/:-        -:/+osssso+-
   `+sso+:-`                 `.-/+oso:
  `++:.                           `-/+/
- .`                                 `/`"#.into()
+ .`                                 `/`"#
+        .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_ascii;
+
+    #[test]
+    fn clean_ascii_removes_only_shared_visual_indentation() {
+        assert_eq!(clean_ascii("    /\\  \n   /__\\\n"), " /\\\n/__\\");
+        assert_eq!(clean_ascii("⠀A\n⠀⠀B"), "A\n⠀B");
+    }
 }

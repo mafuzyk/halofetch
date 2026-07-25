@@ -1,176 +1,253 @@
-# AtlasFetch — Documentação Completa do Projeto
+# AtlasFetch — guia técnico
 
-## O que é
+Este documento explica como o AtlasFetch funciona por dentro. Para instalação e uso diário, comece pelo [README](README.md).
 
-Ferramenta de system info fetch com ASCII art, powerline panels, e TUI configurator. Roda no PC (Linux) e no Android (Termux). Suporta 32 bits.
+## Escopo
 
----
+O AtlasFetch é um fetch de informações para terminais Linux desktop.
 
-## Arquitetura
+Objetivos:
 
+- composição visual centralizada e legível;
+- personalização sem exigir edição manual de JSON;
+- comportamento previsível em diferentes larguras de terminal;
+- binário Rust autocontido;
+- configuração versionada, migrável e gravada atomicamente.
+
+## Fluxo de execução
+
+```text
+argumentos CLI
+     │
+     ├── ação imediata ── preset / reset / update / setup
+     │
+     └── renderização
+             │
+             ├── coleta SysInfo
+             ├── carregamento da configuração
+             ├── carregamento do logo
+             ├── criação dos componentes
+             └── composição da cena → ANSI no terminal
 ```
-src/
-  main.rs           — Entry point, dispatch de flags
-  cli.rs            — CLI args (clap derive)
-  config.rs         — Config struct, load/save JSON, FieldDef
-  info.rs           — SysInfo struct, coleta de dados do sistema
-  ascii.rs          — Carregamento de arte ASCII (arquivo ou embutida)
-  theme.rs          — Cores/palettes
-  layout.rs         — Layout variants (Mobile, MobileNarrow, etc.)
-  render.rs         — Renderização ANSI + StyledSegments (TUI preview)
-  widget.rs         — Widget trait, FieldWidget, Registry
-  layout_engine.rs  — Layout enum (Classic/Stack/Minimal/Compact), trait LayoutEngine
-  mobile.rs         — Mobile render modes (card, bios, companion, ascii) — ANSI output
-  tui/
-    mod.rs          — Dispatching: is_android() → mobile::run, senão app::run
-    app.rs          — TUI wizard PC (~1960 linhas, 6 steps)
-    mobile.rs       — TUI wizard mobile (~686 linhas, 4 steps)
-    editor.rs       — Novo editor interativo com preview e layout switcher
+
+A entrada está em `src/main.rs`. As opções são declaradas em `src/cli.rs`. `main` coordena módulos; regras de cena, persistência e atualização ficam nos respectivos módulos.
+
+## Módulos
+
+| Caminho | Responsabilidade |
+|---|---|
+| `src/main.rs` | Orquestra a execução e os caminhos da CLI |
+| `src/cli.rs` | Define opções com `clap` |
+| `src/config.rs` | Schema v2, defaults, migração e gravação atômica |
+| `src/info.rs` | Coleta informações do Linux usando bancos locais quando possível |
+| `src/ascii.rs` | Resolve logos embutidos e arquivos personalizados |
+| `src/theme.rs` | Cores, presets e gradientes |
+| `src/layout.rs` | Presets de espaçamento usados pelo editor |
+| `src/render.rs` | Primitivas ANSI compartilhadas |
+| `src/output.rs` | Schema JSON versionado |
+| `src/benchmark.rs` | Medição integrada da coleta |
+| `src/widget.rs` | Converte `FieldDef` em segmentos renderizáveis |
+| `src/component/` | Componentes e composição das cenas |
+| `src/tui/state.rs` | Estado e navegação testáveis do editor |
+| `src/tui/events.rs` | Eventos e mutações interativas |
+| `src/tui/editor.rs` | Desenho e ciclo de vida do terminal |
+| `src/update.rs` | Atualização baseada em um checkout Git |
+| `build.rs` | Incorpora o diretório `logos/` no binário |
+
+## CLI
+
+A referência autoritativa é gerada pelo próprio programa:
+
+```bash
+cargo run -- --help
 ```
 
----
+Opções atuais:
 
-## Flags CLI
+| Opção | Efeito |
+|---|---|
+| `-i, --setup` | Abre o editor TUI |
+| `--preset NOME` | Aplica uma paleta e encerra |
+| `--list-presets` | Lista as paletas |
+| `--update` | Atualiza, compila com lockfile e instala |
+| `--reset` | Exclui a configuração ativa e abre o editor |
+| `--just-ascii` | Mostra somente o logo |
+| `--scene CENA` | Sobrescreve a cena apenas nesta execução |
+| `-c, --config ARQUIVO` | Usa outro arquivo de configuração |
+| `--format json` | Emite o schema JSON v1 sem campos vazios |
 
-| Flag | Descrição |
-|------|-----------|
-| `--setup` / `-i` | Wizard TUI antigo |
-| `--editor` | Novo editor com live preview |
-| `--preset <name>` | Aplica palette de cores |
-| `--list-presets` | Lista palettes disponíveis |
-| `--update` | Pull, build, install com `install(1)` |
-| `--mode <mode>` | Mobile render mode (card/bios/companion/ascii) |
-| `--reset` | Deleta config.json e abre setup |
-| `--just-ascii` | Printa só a arte ASCII colorida |
+Os comandos estruturados são `config`, `preset`, `logos`, `update` e `benchmark`. As flags anteriores continuam funcionando para não quebrar configurações de shell existentes.
 
----
+Cenas aceitas: `classic`, `dashboard`, `cockpit` e `classicfetch`. Os aliases `classic-fetch` e `classic_fetch` também são aceitos.
 
-## Mobile Detection
+## Componentes e cenas
 
-`info::is_android()` checa `TERMUX_VERSION` env var ou `/system/build.prop`. Um único binário funciona nos dois ambientes.
+`component::Scene` é um enum serializável e a fonte única dos nomes, descrições e identificadores persistidos. Isso evita divergência entre CLI, TUI e configuração e rejeita cenas desconhecidas antes de salvar.
 
----
-
-## Layout na tela (render.rs)
-
-### PC Render
-
-Classic fetch: ASCII à esquerda, info panels à direita. Título `user@host`, separador, corpo com panels lado a lado. Logo fit check: se terminal for estreito demais pra caber ASCII + panels, a arte é suprimida.
-
-### Mobile Render
-
-ASCII centralizada no topo (bloco inteiro, não linha por linha), info panels em coluna única abaixo. Title + separator iguais ao PC.
-
-### Centering
-
-`dedent()` remove espaços comuns à esquerda da ASCII. `block_center = (term_width - max_logo_width) / 2`. Linhas mais curtas são right-padded pra largura máxima.
-
----
-
-## Widget System (widget.rs)
-
-Cada campo de informação é um `FieldWidget` que implementa `Widget trait`:
+Cada componente implementa:
 
 ```rust
-pub trait Widget: Send + Sync {
-    fn key(&self) -> &str;
-    fn label(&self) -> &str;
-    fn icon(&self) -> &str;
-    fn render(&self, ctx: &RenderCtx) -> WidgetOutput;
-    fn min_width(&self) -> usize { 4 }
+pub trait Component: Send + Sync {
+    fn name(&self) -> &str;
+    fn render_ansi(&self, ctx: &RenderCtx) -> String;
+    fn render_styled(&self, ctx: &RenderCtx) -> Vec<Vec<StyledSpan>>;
+    fn min_width(&self) -> usize;
+    fn min_height(&self) -> usize;
+    fn as_any(&self) -> &dyn Any;
 }
 ```
 
-`FieldWidget` contém um `FieldDef` (field key, icon, label, enabled). O `render()` produz um `WidgetOutput { ansi, styled, width }`.
+Componentes disponíveis:
 
-`Registry` mapeia field keys pra widgets. `Registry::from_fields(left, right)` constrói a partir de config.
+- `AsciiComponent`: logo colorido;
+- `SystemComponent`: campos configurados nos painéis;
+- `MonitorComponent`: métricas ao vivo;
+- `CompanionComponent`: bloco compacto de estado.
 
-`build_panel` e `build_panel_styled` em render.rs agora delegam pra `FieldWidget::render()`.
+A cena decide como combinar os componentes. O mesmo modelo estilizado alimenta a saída ANSI e o preview da TUI.
 
----
+## Configuração
 
-## Layout Engine (layout_engine.rs)
+Local padrão:
 
-4 layouts implementados via `LayoutEngine` trait:
-
-| Layout | Descrição |
-|--------|-----------|
-| Classic | ASCII left, info right (fetch tradicional) |
-| Stack | ASCII centrado topo, info abaixo |
-| Minimal | Só info, sem ASCII |
-| Compact | Info apertada, sem ASCII nem título |
-
-`engine_for(layout)` factory function. Cada engine implementa:
-
-```rust
-fn arrange(widgets, ascii_lines, cfg, info, term_width) -> LayoutOutput { title, separator, rows }
+```text
+~/.config/atlasfetch/config.json
 ```
 
----
+`--config` aponta para um arquivo, inclusive quando ele ainda não existe. Logos copiados e outros dados auxiliares ficam ao lado desse arquivo.
 
-## Editor TUI (tui/editor.rs — --editor)
+Principais estruturas:
 
-Novo editor com layout side-by-side (em terminal largo) ou empilhado (estreito):
+```text
+Config
+├── version
+├── scene
+├── live
+│   ├── enabled
+│   └── interval_ms
+├── logo
+│   ├── key
+│   ├── path
+│   ├── colors
+│   └── color_dir
+├── title
+├── separator
+├── panel
+├── display
+│   ├── left: Vec<FieldDef>
+│   └── right: Vec<FieldDef>
+├── palette
+└── custom_palettes
+```
 
-- **Sidebar esquerda**: seletor de layout (↑/↓), lista de widgets habilitados
-- **Preview direito**: renderização ao vivo usando layout engine
-- **Footer**: nome do layout + descrição
-- **Atalhos**: ↑/↓ troca layout, q/Esc sai
+Um `FieldDef` possui `field`, `icon`, `label` e `enabled`. A deduplicação mantém a primeira ocorrência do campo entre os dois painéis.
 
----
+### Persistência
 
-## Mobile Render Modes (mobile.rs)
+`Config::save`:
 
-4 modos ANSI puro (sem TUI):
+1. serializa para JSON formatado;
+2. grava um arquivo temporário no mesmo diretório;
+3. renomeia o temporário para o destino.
 
-| Mode | Descrição |
-|------|-----------|
-| card | Box-drawing cards com bordas |
-| bios | Estilo terminal/engenharia |
-| companion | Progress bars pra battery/RAM/storage |
-| ascii | ASCII + info, responsivo |
+A renomeação no mesmo sistema de arquivos evita configurações parcialmente escritas.
 
----
+### Migração
 
-## Config (config.rs)
+O formato atual é a versão 2. Configurações antigas geradas pela implementação Python são reconhecidas e convertidas. Os arrays posicionais antigos viram objetos `FieldDef`.
 
-`Config` struct serializada como JSON em `~/.config/atlasfetch/config.json`:
+Uma configuração inválida é movida para `config.json.invalid` (ou para o próximo sufixo livre) antes de os defaults serem criados. Assim, um erro de sintaxe nunca destrói a única cópia disponível.
 
-- `logo.key/path/colors` — arte e palette
-- `title.format/color` — `"user@host"`
-- `separator.char/length/color`
-- `panel.left_pad/right_pad/gap/max_shift/max_val_width/sep_color/val_color`
-- `display.left/right` — `Vec<FieldDef>` com field/icon/label/enabled
-- `Config::mobile_default()` pra Android
+## Coleta de informações
 
----
+`info::collect` reúne um `SysInfo`. A preferência é por interfaces do kernel, como `/proc` e `/sys`; comandos externos são usados quando são a fonte prática disponível, por exemplo para determinados gerenciadores de pacotes e ambientes gráficos.
 
-## Info Collection (info.rs)
+Falhas individuais devem produzir campo vazio ou fallback, não impedir o fetch inteiro. A contagem dos gerenciadores principais consulta bancos locais antes de executar processos. Ao adicionar um coletor:
 
-`SysInfo` com campos: user, host, os, kernel, uptime, packages, shell, cpu, gpu, memory, storage, terminal, de, wm, fonts, +18 campos mobile (device, rom, soc, arch, battery_*, root_status, bootloader, selinux, cpu_temp, brightness, refresh_rate, signal, wifi_ssid, security_patch, uptime_days).
+1. limite leituras ao necessário;
+2. trate arquivos e comandos ausentes;
+3. não assuma uma distribuição;
+4. não bloqueie esperando rede;
+5. adicione um teste à parte puramente textual.
 
-`SysInfo::get(field: &str) -> Option<&str>` accessor.
+## Logos
 
----
+`build.rs` lê `logos/` e gera uma tabela incorporada durante a compilação. Assim, o binário conhece centenas de logos sem depender do diretório do repositório em tempo de execução.
 
-## Dependências
+Convenções:
 
-clap, serde, serde_json, ratatui + crossterm, color-eyre, libc, directories, unicode-width, regex. Tudo crate Rust, sem dependências de sistema.
+- o nome do arquivo é a chave do logo;
+- variantes compactas usam normalmente o sufixo `_small`;
+- mantenha a arte sem códigos ANSI;
+- teste largura e alinhamento com caracteres Unicode.
 
----
+## Editor TUI
 
-## Mobile Info (Android)
+O editor possui cinco abas: Theme, Mode, Panels, ASCII e Save. Alterações são feitas sobre uma cópia da configuração e só substituem a configuração original quando a pessoa escolhe salvar.
 
-Detection: `/proc/cpuinfo` (Hardware, Processor), GPU via `/sys/kernel/gpu/` ou DRM, battery via termux-battery-status ou sysfs, root via Magisk/APatch/KernelSU, storage via `df`, sensores via sysfs.
+A interface usa duas disposições responsivas: controles e preview ficam lado a lado a partir de 100 colunas e empilhados abaixo disso. O tamanho mínimo suportado é 52 × 16; abaixo dele, o editor mostra uma orientação de redimensionamento.
 
----
+Atalhos globais:
 
-## --update
+- `Tab` e `Shift+Tab`: avançar e voltar entre seções;
+- `Ctrl+S`: salvar e sair de qualquer aba; um campo de texto aberto deve ser confirmado antes com `Enter`;
+- `?`: abrir o guia completo de teclado;
+- `q` ou `Esc`: solicitar saída. Se houver alterações, um diálogo oferece salvar, descartar ou continuar.
 
-`install(1)` pra substituição atômica do binário em execução. Fallback: `cp` + `mv`. Busca source dir em CWD, caminho do binário, e diretórios comuns (`~/Projetos/`, `~/src/`, etc.).
+O estado `changed` representa alterações ainda não salvas e é separado de `dirty`, que indica apenas que o preview precisa ser redesenhado. Essa separação evita alertas falsos causados pela atualização automática do monitor.
 
----
+O modo Monitor atualiza métricas periodicamente. Fora dele, eventos são processados de forma bloqueante para evitar consumo desnecessário de CPU.
 
-## 32-bit Compatibility
+O toggle Monitor da aba Mode é persistido em `live.enabled`. Quando ativo, `atlasfetch` abre o workspace contínuo com a cena configurada na parte superior e um shell real, conectado por PTY e interpretado por VT100, na parte inferior. `Ctrl+Q` fecha o workspace; teclas como `Ctrl+C`, `Esc` e `Ctrl+D` pertencem ao shell. `atlasfetch fetch` força uma renderização estática.
 
-Usa `usize` pra widths/sizes (correto em 32 e 64 bits). `u64` só onde necessário (timestamps, bytes). Sem transmute, asm, ou código arch-specific.
+`atlasfetch monitor` força o workspace independentemente da preferência salva. `--interval`/`-i` controla o período em milissegundos e `--scene` sobrescreve a cena. O loop preserva o componente de CPU entre frames e atualiza apenas informações voláteis, evitando redetectar pacotes, fontes e ambiente gráfico a cada ciclo.
+
+As métricas Linux são obtidas de interfaces locais: CPU em duas amostras de `/proc/stat`, memória em `/proc/meminfo`, GPU em DRM sysfs ou `nvidia-smi`, temperatura em `thermal_zone` e `hwmon`, bateria em `power_supply` e disco via `statvfs`. Zero é exibido somente quando a leitura realmente retorna zero; sensores indisponíveis são omitidos ou marcados como `N/A`.
+
+Os testes com o backend virtual do Ratatui verificam o layout completo, a mensagem para terminal estreito e a confirmação de saída. Pontos sensíveis para testes futuros:
+
+- busca e seleção de logos;
+- cancelamento sem salvar;
+- reordenação e deduplicação de campos;
+- largura Unicode;
+- cenas em terminais estreitos;
+- persistência de paletas personalizadas.
+
+## Atualizador
+
+`src/update.rs` recusa checkouts com alterações locais e procura um checkout válido nesta ordem:
+
+1. `ATLASFETCH_SRC`;
+2. diretório atual;
+3. ancestrais do executável;
+4. diretórios de desenvolvimento comuns dentro da home.
+
+Depois executa `git pull --rebase --autostash`, `cargo build --release --locked` e instala em `~/.local/bin/atlasfetch`.
+
+O atualizador é conveniente para instalações a partir do código-fonte; releases empacotadas devem futuramente usar checksums e assinaturas.
+
+## Qualidade e CI
+
+Antes de enviar uma mudança:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --all-features --locked
+cargo build --release --locked
+```
+
+`.github/workflows/ci.yml` executa essa sequência em pushes e pull requests. `release.yml` repete testes e publica variantes GNU e musl acompanhadas de SHA-256.
+
+Os testes atuais cobrem snapshots determinísticos das quatro cenas, larguras diferentes, navegação e reordenação na TUI, parsing de cenas, validação e deduplicação de config, schema JSON, detecção do checkout, benchmark, normalização de CPU/GPU e dedent de ASCII.
+
+## Como contribuir
+
+Uma mudança está pronta quando:
+
+- a interface documentada corresponde à ajuda da CLI;
+- `rustfmt`, Clippy e testes passam sem avisos;
+- caminhos de erro não apagam dados silenciosamente;
+- a TUI e a saída normal continuam usando a mesma regra;
+- novos nomes persistidos possuem migração ou compatibilidade;
+- README e este guia foram atualizados quando necessário.

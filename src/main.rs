@@ -6,134 +6,23 @@
 // terminal output.
 
 mod ascii;
+mod benchmark;
 mod cli;
 mod component;
 mod config;
 mod info;
 mod layout;
-mod mobile;
+mod live;
+mod output;
 mod render;
 mod theme;
 mod tui;
+mod update;
 mod widget;
 
 use clap::Parser;
 use color_eyre::Result;
-use std::process::Command;
-
-fn detect_src_dir() -> String {
-    if let Ok(dir) = std::env::var("ATLASFETCH_SRC") {
-        return dir;
-    }
-    // Try CWD first
-    if let Ok(cwd) = std::env::current_dir() {
-        if cwd.join("Cargo.toml").exists() && cwd.join(".git").exists() {
-            return cwd.to_string_lossy().to_string();
-        }
-    }
-    // Try to find source from the binary's own path
-    if let Ok(exe) = std::env::current_exe() {
-        let mut path = exe.parent().unwrap_or(std::path::Path::new("/"));
-        for _ in 0..5 {
-            if path.join("Cargo.toml").exists() && path.join(".git").exists() {
-                return path.to_string_lossy().to_string();
-            }
-            if let Some(parent) = path.parent() {
-                path = parent;
-            } else {
-                break;
-            }
-        }
-    }
-    // Try common locations
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    for candidate in &[
-        format!("{}/Projetos/atlasfetch", home),
-        format!("{}/src/atlasfetch", home),
-        format!("{}/atlasfetch", home),
-        format!("{}/code/atlasfetch", home),
-        format!("{}/dev/atlasfetch", home),
-    ] {
-        if std::path::Path::new(candidate).join("Cargo.toml").exists() && std::path::Path::new(candidate).join(".git").exists() {
-            return candidate.clone();
-        }
-    }
-    format!("{}/atlasfetch", home)
-}
-
-fn update_atlasfetch() -> Result<()> {
-    let src = detect_src_dir();
-    println!("📦 atlasfetch update — source: {}", src);
-
-    // git pull
-    println!("→ Pulling latest source...");
-    let status = Command::new("git")
-        .args(["-C", &src, "pull", "--rebase", "--autostash"])
-        .status()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to run git: {}. Is git installed?", e))?;
-
-    if !status.success() {
-        color_eyre::eyre::bail!(
-            "git pull failed. Make sure '{}' is a git clone of https://github.com/mafuzyk/atlasfetch",
-            src
-        );
-    }
-
-    // cargo build
-    println!("→ Building release binary...");
-    let status = Command::new("cargo")
-        .args(["build", "--release"])
-        .current_dir(&src)
-        .status()
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to run cargo: {}. Is Rust installed?", e))?;
-
-    if !status.success() {
-        color_eyre::eyre::bail!("cargo build failed.");
-    }
-
-    // determine install path
-    let binary = format!("{}/target/release/atlasfetch", src);
-    let dest = if info::is_android() {
-        let prefix = std::env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".into());
-        format!("{}/bin/atlasfetch", prefix)
-    } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        format!("{}/.local/bin/atlasfetch", home)
-    };
-
-    // Create parent directory if needed
-    if let Some(parent) = std::path::Path::new(&dest).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    println!("→ Installing to {}...", dest);
-    // Use install(1) which handles running binaries via temp+rename
-    // Fallback to cp -f + atomic rename
-    let status = Command::new("install")
-        .args(["-m", "755", &binary, &dest])
-        .status()
-        .or_else(|_| {
-            // cp fallback: copy to temp then rename (atomic)
-            let tmp = format!("{}.new", dest);
-            Command::new("cp").args([&binary, &tmp]).status().and_then(|s| {
-                if s.success() {
-                    Command::new("mv").args([&tmp, &dest]).status()
-                } else {
-                    Ok(s)
-                }
-            })
-        })?;
-
-    if !status.success() {
-        color_eyre::eyre::bail!(
-            "Failed to install binary to {}. Make sure the directory exists and is writable.",
-            dest
-        );
-    }
-
-    println!("✅ Updated to latest version!");
-    Ok(())
-}
+use std::io::IsTerminal;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -144,90 +33,52 @@ fn main() -> Result<()> {
         config::set_config_path(cfg_path.clone());
     }
 
+    if let Some(command) = args.command.as_ref() {
+        return run_command(command);
+    }
+
     // --list-presets: print and exit
     if args.list_presets {
-        let themes = theme::all_themes();
-        println!("Available presets:");
-        for t in &themes {
-            let swatch: String = t
-                .colors
-                .iter()
-                .map(|c| format!("\x1b[48;2;{};{};{}m  \x1b[0m", c.r, c.g, c.b))
-                .collect();
-            println!("  {:20} {}", t.name, swatch);
-        }
+        list_presets();
         return Ok(());
     }
 
     // --preset: apply and exit
     if let Some(ref name) = args.preset {
-        let themes = theme::all_themes();
-        if let Some(t) = themes.iter().find(|t| t.name == *name) {
-            let mut cfg = config::Config::load()?;
-            cfg.logo.colors = t.colors.clone();
-            cfg.save()?;
-            println!("Preset \"{}\" applied.", name);
-        } else {
-            eprintln!("Preset \"{}\" not found. Use --list-presets.", name);
-        }
-        return Ok(());
+        return apply_preset(name);
     }
 
     // --update: pull, build, install
     if args.update {
-        return update_atlasfetch();
+        return update::run();
     }
 
     // --reset: delete config and launch setup wizard
     if args.reset {
-        let path = config::config_path()?;
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-            println!("Config removed.");
-        }
-        let mut cfg = config::Config::load()?;
-        tui::run(&mut cfg)?;
-        return Ok(());
-    }
-
-    // --mode: mobile rendering mode
-    if let Some(ref mode_str) = args.mode {
-        if let Some(mode) = mobile::MobileMode::from_str(mode_str) {
-            let cfg = config::Config::load()?;
-            let info = info::collect()?;
-            let ascii_art = ascii::load(&cfg)?;
-            print!("{}", mobile::render(&mode, &cfg, &info, &ascii_art));
-            return Ok(());
-        } else {
-            eprintln!("Unknown mode '{}'. Available modes: {:?}", mode_str, mobile::MobileMode::variants());
-            return Ok(());
-        }
+        return reset_config();
     }
 
     // --scene: override scene
     if let Some(ref s) = args.scene {
-        let scene = match s.as_str() {
-            "classic" => component::Scene::Classic,
-            "dashboard" => component::Scene::Dashboard,
-            "cockpit" => component::Scene::Cockpit,
-            "classicfetch" | "classic_fetch" => component::Scene::ClassicFetch,
-            _ => {
-                eprintln!("Unknown scene '{}'. Available: classic, dashboard, cockpit, split", s);
-                return Ok(());
-            }
-        };
+        let scene = s.parse::<component::Scene>()?;
         ascii::ensure_logos()?;
         let cfg = config::Config::load()?;
         let info = info::collect()?;
         let ascii_art = ascii::load(&cfg)?;
         let tw = layout::terminal_width();
-        let ctx = component::RenderCtx { info: &info, cfg: &cfg, term_width: tw, palette: &cfg.logo.colors };
+        let ctx = component::RenderCtx {
+            info: &info,
+            cfg: &cfg,
+            term_width: tw,
+            palette: &cfg.logo.colors,
+        };
         use component::Component;
         let ascii_comp = component::ascii::AsciiComponent::new(ascii_art.clone());
         let system_comp = component::system::SystemComponent;
         let monitor_comp = component::monitor::MonitorComponent::new();
         let companion_comp = component::companion::CompanionComponent;
-        let comps: Vec<&dyn Component> = vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
+        let comps: Vec<&dyn Component> =
+            vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
         print!("{}", component::render_scene_ansi(scene, &comps, &ctx));
         return Ok(());
     }
@@ -243,9 +94,12 @@ fn main() -> Result<()> {
 
     // setup: launch TUI configurator
     if args.setup {
-        let mut cfg = config::Config::load()?;
-        tui::run(&mut cfg)?;
-        cfg.save()?;
+        return setup();
+    }
+
+    if matches!(args.format, cli::OutputFormat::Json) {
+        let info = info::collect()?;
+        println!("{}", output::system_info_json(&info)?);
         return Ok(());
     }
 
@@ -257,6 +111,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let startup_cfg = config::Config::load()?;
+    if startup_cfg.live.enabled && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    {
+        return live::run(startup_cfg.live.interval_ms, None);
+    }
+
     // default: print fetch output
     ascii::ensure_logos()?;
     let cfg = config::Config::load()?;
@@ -264,14 +124,7 @@ fn main() -> Result<()> {
     let ascii_art = ascii::load(&cfg)?;
 
     let term_width = layout::terminal_width();
-    let is_mobile = info::is_android();
-
-    let scene = match cfg.scene.as_str() {
-        "dashboard" => component::Scene::Dashboard,
-        "cockpit" => component::Scene::Cockpit,
-        "classicfetch" | "classic_fetch" => component::Scene::ClassicFetch,
-        _ => component::Scene::Classic,
-    };
+    let scene = cfg.scene;
 
     let ctx = component::RenderCtx {
         info: &info,
@@ -280,20 +133,123 @@ fn main() -> Result<()> {
         palette: &cfg.logo.colors,
     };
 
-    let output = if is_mobile && term_width < 55 {
-        render::render_mobile(&cfg, &info, &ascii_art, true)?
-    } else if is_mobile {
-        render::render_mobile(&cfg, &info, &ascii_art, false)?
-    } else {
+    let output = {
         use component::Component;
         let ascii_comp = component::ascii::AsciiComponent::new(ascii_art.clone());
         let system_comp = component::system::SystemComponent;
         let monitor_comp = component::monitor::MonitorComponent::new();
         let companion_comp = component::companion::CompanionComponent;
-        let components: Vec<&dyn Component> = vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
+        let components: Vec<&dyn Component> =
+            vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
         component::render_scene_ansi(scene, &components, &ctx)
     };
 
     print!("{}", output);
     Ok(())
+}
+
+fn run_command(command: &cli::Command) -> Result<()> {
+    match command {
+        cli::Command::Fetch => render_static_fetch(),
+        cli::Command::Config { action: None } => setup(),
+        cli::Command::Config {
+            action: Some(cli::ConfigAction::Path),
+        } => {
+            println!("{}", config::config_path()?.display());
+            Ok(())
+        }
+        cli::Command::Config {
+            action: Some(cli::ConfigAction::Reset),
+        } => reset_config(),
+        cli::Command::Preset {
+            action: cli::PresetAction::List,
+        } => {
+            list_presets();
+            Ok(())
+        }
+        cli::Command::Preset {
+            action: cli::PresetAction::Apply { name },
+        } => apply_preset(name),
+        cli::Command::Logos {
+            action: cli::LogosAction::List,
+        } => {
+            for logo in ascii::available_logos()? {
+                println!("{logo}");
+            }
+            Ok(())
+        }
+        cli::Command::Update => update::run(),
+        cli::Command::Benchmark { iterations } => benchmark::run(*iterations),
+        cli::Command::Monitor { interval, scene } => live::run(*interval, scene.as_deref()),
+    }
+}
+
+fn render_static_fetch() -> Result<()> {
+    ascii::ensure_logos()?;
+    let cfg = config::Config::load()?;
+    let system_info = info::collect()?;
+    let ascii_art = ascii::load(&cfg)?;
+    let ctx = component::RenderCtx {
+        info: &system_info,
+        cfg: &cfg,
+        term_width: layout::terminal_width(),
+        palette: &cfg.logo.colors,
+    };
+    use component::Component;
+    let ascii_component = component::ascii::AsciiComponent::new(ascii_art);
+    let system_component = component::system::SystemComponent;
+    let monitor_component = component::monitor::MonitorComponent::new();
+    let companion_component = component::companion::CompanionComponent;
+    let components: Vec<&dyn Component> = vec![
+        &ascii_component,
+        &system_component,
+        &monitor_component,
+        &companion_component,
+    ];
+    print!(
+        "{}",
+        component::render_scene_ansi(cfg.scene, &components, &ctx)
+    );
+    Ok(())
+}
+
+fn list_presets() {
+    println!("Available presets:");
+    for preset in theme::all_themes() {
+        let swatch: String = preset
+            .colors
+            .iter()
+            .map(|color| format!("\x1b[48;2;{};{};{}m  \x1b[0m", color.r, color.g, color.b))
+            .collect();
+        println!("  {:20} {}", preset.name, swatch);
+    }
+}
+
+fn apply_preset(name: &str) -> Result<()> {
+    let preset = theme::all_themes()
+        .into_iter()
+        .find(|preset| preset.name == name)
+        .ok_or_else(|| {
+            color_eyre::eyre::eyre!("preset '{name}' not found; use 'atlasfetch preset list'")
+        })?;
+    let mut cfg = config::Config::load()?;
+    cfg.logo.colors = preset.colors;
+    cfg.save()?;
+    println!("Preset \"{name}\" applied.");
+    Ok(())
+}
+
+fn setup() -> Result<()> {
+    let mut cfg = config::Config::load()?;
+    tui::run(&mut cfg)?;
+    cfg.save()
+}
+
+fn reset_config() -> Result<()> {
+    let path = config::config_path()?;
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+        println!("Config removed.");
+    }
+    setup()
 }
