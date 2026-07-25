@@ -25,6 +25,11 @@ use super::state::{Editor, InputMode, Tab};
 impl Editor {
     pub(super) fn new(cfg: Config) -> Result<Self> {
         let info = info::collect()?;
+        let terminal_size = terminal::size().unwrap_or((80, 24));
+        Self::new_with_context(cfg, info, terminal_size)
+    }
+
+    fn new_with_context(cfg: Config, info: info::SysInfo, (tw, th): (u16, u16)) -> Result<Self> {
         let logo_keys = ascii::available_logos()?;
         let ascii_art = ascii::load(&cfg)?;
         let ascii_is_small = {
@@ -106,7 +111,6 @@ impl Editor {
             }
         }
 
-        let (tw, th) = terminal::size()?;
         let layout_selected = AppLayout::pc_variants()
             .iter()
             .position(|l| *l == app_layout)
@@ -1368,9 +1372,14 @@ mod tests {
             .join("")
     }
 
+    fn editor_fixture(size: (u16, u16)) -> Editor {
+        Editor::new_with_context(Config::default(), info::SysInfo::default(), size)
+            .expect("editor fixture")
+    }
+
     #[test]
     fn full_layout_exposes_global_actions_and_preview() {
-        let mut editor = Editor::new(Config::default()).expect("editor fixture");
+        let mut editor = editor_fixture((120, 40));
         editor.changed = true;
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1388,7 +1397,7 @@ mod tests {
 
     #[test]
     fn narrow_terminal_gets_an_actionable_fallback() {
-        let mut editor = Editor::new(Config::default()).expect("editor fixture");
+        let mut editor = editor_fixture((40, 10));
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).expect("test terminal");
 
@@ -1403,7 +1412,7 @@ mod tests {
 
     #[test]
     fn quit_confirmation_is_rendered_over_the_editor() {
-        let mut editor = Editor::new(Config::default()).expect("editor fixture");
+        let mut editor = editor_fixture((100, 30));
         editor.changed = true;
         editor.input_mode = InputMode::ConfirmQuit;
         let backend = TestBackend::new(100, 30);
