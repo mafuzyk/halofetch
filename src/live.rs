@@ -40,6 +40,9 @@ const BORDER_COLOR: TuiColor = TuiColor::Rgb(157, 133, 255);
 const SHELL_BORDER_COLOR: TuiColor = TuiColor::Rgb(100, 100, 125);
 const PASTE_START: &str = "\x1b[200~";
 const PASTE_END: &str = "\x1b[201~";
+/// Cursor position request (DSR 6). ConPTY sends one when it starts and draws nothing
+/// until it gets an answer; shells such as fish ask it too.
+const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 
 type Term = Terminal<CrosstermBackend<io::Stdout>>;
 
@@ -176,7 +179,7 @@ fn shell_size(region: Rect) -> (u16, u16) {
 struct Shell {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     parser: Arc<Mutex<vt100::Parser>>,
     /// Set by the reader thread when the shell printed something.
     dirty: Arc<AtomicBool>,
@@ -208,19 +211,36 @@ impl Shell {
             .take_writer()
             .map_err(|error| eyre!("failed to write shell PTY: {error}"))?;
 
+        let writer = Arc::new(Mutex::new(writer));
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, SCROLLBACK_LINES)));
         let dirty = Arc::new(AtomicBool::new(true));
         let reader_parser = Arc::clone(&parser);
         let reader_dirty = Arc::clone(&dirty);
+        let reader_writer = Arc::clone(&writer);
         std::thread::spawn(move || {
             let mut bytes = [0_u8; 8192];
+            let mut tail = Vec::new();
             while let Ok(count) = reader.read(&mut bytes) {
                 if count == 0 {
                     break;
                 }
-                if let Ok(mut parser) = reader_parser.lock() {
-                    parser.process(&bytes[..count]);
-                    reader_dirty.store(true, Ordering::Release);
+                let chunk = &bytes[..count];
+                let queries = cursor_queries(&mut tail, chunk);
+                let Ok(mut parser) = reader_parser.lock() else {
+                    break;
+                };
+                parser.process(chunk);
+                reader_dirty.store(true, Ordering::Release);
+                if queries == 0 {
+                    continue;
+                }
+                let (row, col) = parser.screen().cursor_position();
+                drop(parser);
+                let reply = cursor_report(row, col).repeat(queries);
+                if let Ok(mut writer) = reader_writer.lock() {
+                    let _ = writer
+                        .write_all(reply.as_bytes())
+                        .and_then(|()| writer.flush());
                 }
             }
         });
@@ -268,9 +288,12 @@ impl Shell {
         if bytes.is_empty() {
             return true;
         }
-        self.writer
+        let Ok(mut writer) = self.writer.lock() else {
+            return false;
+        };
+        writer
             .write_all(bytes)
-            .and_then(|()| self.writer.flush())
+            .and_then(|()| writer.flush())
             .is_ok()
     }
 
@@ -464,6 +487,24 @@ fn vt_color(color: vt100::Color) -> TuiColor {
     }
 }
 
+/// Cursor position requests in `chunk`, counting one split across reads. `tail` keeps
+/// the bytes a request may continue from and is updated for the next read.
+fn cursor_queries(tail: &mut Vec<u8>, chunk: &[u8]) -> usize {
+    tail.extend_from_slice(chunk);
+    let count = tail
+        .windows(CURSOR_QUERY.len())
+        .filter(|window| *window == CURSOR_QUERY)
+        .count();
+    let keep = tail.len().saturating_sub(CURSOR_QUERY.len() - 1);
+    tail.drain(..keep);
+    count
+}
+
+/// Answer to a cursor position request, 1-based as the terminal reports it.
+fn cursor_report(row: u16, col: u16) -> String {
+    format!("\x1b[{};{}R", row + 1, col + 1)
+}
+
 /// Bytes sent to the shell for a pasted text. The text is wrapped in bracketed paste
 /// markers only when the shell enabled them, and an end marker inside the text is
 /// removed so it cannot end the paste early.
@@ -534,7 +575,10 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_bytes, paste_bytes, shell_size, split, windows_shell, windows_shell_args};
+    use super::{
+        cursor_queries, cursor_report, key_bytes, paste_bytes, shell_size, split, windows_shell,
+        windows_shell_args,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
     use std::path::{Path, PathBuf};
@@ -581,6 +625,18 @@ mod tests {
             key_bytes(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE)),
             b"\x1b[24~"
         );
+    }
+
+    #[test]
+    fn cursor_queries_are_found_even_when_split_across_reads() {
+        let mut tail = Vec::new();
+        assert_eq!(cursor_queries(&mut tail, b"\x1b[6n"), 1);
+        assert_eq!(cursor_queries(&mut tail, b"ab\x1b"), 0);
+        assert_eq!(cursor_queries(&mut tail, b"["), 0);
+        assert_eq!(cursor_queries(&mut tail, b"6nxx\x1b[6n"), 2);
+        assert_eq!(cursor_queries(&mut tail, b"\x1b[5n"), 0);
+        assert_eq!(cursor_report(0, 0), "\x1b[1;1R");
+        assert_eq!(cursor_report(4, 11), "\x1b[5;12R");
     }
 
     #[test]
