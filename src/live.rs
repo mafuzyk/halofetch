@@ -5,7 +5,6 @@
 //! with it, up to 60% of the screen.
 
 use std::io::{self, Read, Write};
-#[cfg(not(windows))]
 use std::path::Path;
 #[cfg(any(windows, test))]
 use std::path::PathBuf;
@@ -310,7 +309,7 @@ fn shell_command() -> CommandBuilder {
 
 /// The shell on Windows: `$SHELL` when it names an existing file (Git Bash exports an
 /// MSYS path that Windows cannot start), else PowerShell, else the console interpreter.
-/// No arguments and no `TERM`: these shells do not take the Unix options.
+/// No `TERM`: only the Unix-style shells below understand the interactive option.
 #[cfg(windows)]
 fn shell_command() -> CommandBuilder {
     let shell = windows_shell(
@@ -320,7 +319,10 @@ fn shell_command() -> CommandBuilder {
         find_on_path,
         std::env::var_os("COMSPEC").map(PathBuf::from),
     );
-    let mut command = CommandBuilder::new(shell);
+    let mut command = CommandBuilder::new(&shell);
+    for arg in windows_shell_args(&shell) {
+        command.arg(arg);
+    }
     if let Ok(cwd) = std::env::current_dir() {
         command.cwd(cwd);
     }
@@ -339,6 +341,26 @@ fn windows_shell(
         .or_else(|| find("powershell.exe"))
         .or(comspec)
         .unwrap_or_else(|| PathBuf::from("cmd.exe"))
+}
+
+/// Arguments for the Windows shell, chosen by the file name without its extension.
+/// Bash, zsh and fish get the same interactive option as on Unix, fish with the greeting
+/// workaround. PowerShell and cmd get none.
+#[cfg(any(windows, test))]
+fn windows_shell_args(shell: &Path) -> &'static [&'static str] {
+    let file = shell.to_string_lossy();
+    let file = file.rsplit(['\\', '/']).next().unwrap_or_default();
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    match stem.to_ascii_lowercase().as_str() {
+        "fish" => &[
+            "-i",
+            "--features=no-query-term",
+            "-C",
+            "functions --erase fish_greeting",
+        ],
+        "bash" | "zsh" => &["-i"],
+        _ => &[],
+    }
 }
 
 /// The first file called `name` in the directories listed in `PATH`.
@@ -512,10 +534,10 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_bytes, paste_bytes, shell_size, split, windows_shell};
+    use super::{key_bytes, paste_bytes, shell_size, split, windows_shell, windows_shell_args};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     /// A `PATH` lookup that finds exactly the listed names.
     fn on_path(names: &'static [&'static str]) -> impl Fn(&str) -> Option<PathBuf> {
@@ -602,5 +624,40 @@ mod tests {
         let comspec = PathBuf::from(r"C:\Windows\system32\cmd.exe");
         assert_eq!(windows_shell(None, &none, Some(comspec.clone())), comspec);
         assert_eq!(windows_shell(None, &none, None), PathBuf::from("cmd.exe"));
+    }
+
+    #[test]
+    fn unix_style_shells_get_the_interactive_option() {
+        let bash = Path::new(r"C:\Program Files\Git\usr\bin\bash.exe");
+        assert_eq!(windows_shell_args(bash), &["-i"][..]);
+        assert_eq!(
+            windows_shell_args(Path::new("C:/tools/Zsh.EXE")),
+            &["-i"][..]
+        );
+        assert_eq!(windows_shell_args(Path::new("bash")), &["-i"][..]);
+    }
+
+    #[test]
+    fn fish_also_gets_the_greeting_workaround() {
+        assert_eq!(
+            windows_shell_args(Path::new(r"C:\bin\fish.exe")),
+            &[
+                "-i",
+                "--features=no-query-term",
+                "-C",
+                "functions --erase fish_greeting"
+            ][..]
+        );
+    }
+
+    #[test]
+    fn powershell_and_cmd_get_no_arguments() {
+        for shell in [
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            r"C:\Windows\system32\cmd.exe",
+        ] {
+            assert!(windows_shell_args(Path::new(shell)).is_empty(), "{shell}");
+        }
     }
 }

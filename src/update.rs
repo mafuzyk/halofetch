@@ -4,6 +4,7 @@ use color_eyre::{
     eyre::{bail, eyre},
     Result,
 };
+use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -79,19 +80,18 @@ fn detect_source_dir() -> Result<PathBuf> {
         }
     }
 
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    for relative in [
-        "Projetos/atlasfetch",
-        "src/atlasfetch",
-        "atlasfetch",
-        "code/atlasfetch",
-        "dev/atlasfetch",
-    ] {
-        let candidate = home.join(relative);
-        if is_source_dir(&candidate) {
-            return Ok(candidate);
+    if let Some(home) = BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
+        for relative in [
+            "Projetos/atlasfetch",
+            "src/atlasfetch",
+            "atlasfetch",
+            "code/atlasfetch",
+            "dev/atlasfetch",
+        ] {
+            let candidate = home.join(relative);
+            if is_source_dir(&candidate) {
+                return Ok(candidate);
+            }
         }
     }
 

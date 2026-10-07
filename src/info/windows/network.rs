@@ -124,12 +124,21 @@ unsafe fn first_ipv4(mut unicast: *mut IP_ADAPTER_UNICAST_ADDRESS_LH) -> Option<
                 // SAFETY: S_addr is the union member that holds the address.
                 let raw = unsafe { inet.sin_addr.S_un.S_addr };
                 // The address is in network byte order, so its in-memory bytes are the octets.
-                return Some(Ipv4Addr::from(raw.to_ne_bytes()));
+                let address = Ipv4Addr::from(raw.to_ne_bytes());
+                if is_usable(address) {
+                    return Some(address);
+                }
             }
         }
         unicast = node.Next;
     }
     None
+}
+
+/// Link-local (169.254.0.0/16) addresses are self-assigned when DHCP fails and do not
+/// identify the machine on the network.
+fn is_usable(address: Ipv4Addr) -> bool {
+    !address.is_link_local()
 }
 
 /// Text of a NUL-terminated UTF-16 string, or empty for a null pointer.
@@ -198,6 +207,14 @@ mod tests {
             "192.168.1.5 (Wi-Fi)"
         );
         assert_eq!(format_ip(Ipv4Addr::new(10, 0, 0, 2), ""), "10.0.0.2");
+    }
+
+    #[test]
+    fn link_local_addresses_are_not_reported() {
+        assert!(!is_usable(Ipv4Addr::new(169, 254, 10, 20)));
+        assert!(!is_usable(Ipv4Addr::new(169, 254, 0, 1)));
+        assert!(is_usable(Ipv4Addr::new(192, 168, 1, 5)));
+        assert!(is_usable(Ipv4Addr::new(169, 255, 0, 1)));
     }
 
     #[test]
