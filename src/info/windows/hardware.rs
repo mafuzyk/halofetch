@@ -145,12 +145,30 @@ fn is_adapter_key(name: &str) -> bool {
     name.len() == 4 && name.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// Display drivers for virtual monitors (streaming, VR, remote desktop) that sit next to
+/// the real GPU.
+fn is_virtual_adapter(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "virtual display",
+        "virtual monitor",
+        "indirect display",
+        "parsec",
+    ]
+    .iter()
+    .any(|marker| name.contains(marker))
+}
+
 fn gpu_list(names: impl IntoIterator<Item = String>) -> Option<String> {
     let mut unique: Vec<String> = Vec::new();
     for name in names {
         let name = name.replace("(R)", "").replace("(TM)", "");
         let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
-        if name.is_empty() || GENERIC_ADAPTERS.contains(&name.as_str()) || unique.contains(&name) {
+        if name.is_empty()
+            || GENERIC_ADAPTERS.contains(&name.as_str())
+            || is_virtual_adapter(&name)
+            || unique.contains(&name)
+        {
             continue;
         }
         unique.push(name);
@@ -229,6 +247,8 @@ mod tests {
         let names = [
             "Intel(R) UHD Graphics 630",
             "Microsoft Basic Display Adapter",
+            "Virtual Display Driver by MTT",
+            "Parsec Virtual Display Adapter",
             "NVIDIA GeForce RTX 4070",
             "Intel(R) UHD Graphics 630",
             "",
