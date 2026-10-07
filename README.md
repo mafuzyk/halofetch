@@ -18,7 +18,7 @@ sharing one carefully arranged terminal canvas.
 
 AtlasFetch treats terminal output like a layout instead of a list. Its scenes place a colored ASCII logo next to the information you care about; its live monitor keeps that composition above a PTY-backed shell you can use normally.
 
-It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. If it is Linux and it has a terminal, AtlasFetch should run there.
+It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. Linux is the primary target. Windows 10 and 11 are supported as well, see [Windows](#windows).
 
 ## Why AtlasFetch?
 
@@ -104,8 +104,8 @@ The upper region shows the scene and refreshes its values at the configured inte
 ```
 
 - Keys go to the shell, including completion, history, `sudo`, SSH, editors and control keys. The only key the workspace keeps is `Ctrl+Q`, which closes it.
-- The shell is `$SHELL -i`. Fish starts without its greeting and without its terminal query.
-- Values refreshed in place: uptime, load, process count, memory, swap, disk, battery, CPU temperature, backlight, CPU usage and GPU usage. Package, font and desktop detection is not repeated.
+- The shell is `$SHELL -i`. Fish starts without its greeting and without its terminal query. On Windows the shell is PowerShell or cmd unless `$SHELL` names a file; see [Windows](#windows).
+- Values refreshed in place: uptime, load, process count, memory, swap, disk, battery, CPU temperature, backlight, CPU usage and GPU usage. Package, font and desktop detection is not repeated. Which of these exist on Windows is listed in [Windows](#windows).
 - The screen is redrawn after each refresh and whenever the shell prints something, not in a tight loop.
 - `atlasfetch monitor -i 500` refreshes every 500 ms. The interval can be 100 to 60000 ms.
 - Monitor needs an interactive terminal. In a pipe, use `fetch`.
@@ -326,7 +326,7 @@ nix profile install github:mafuzyk/atlasfetch
 atlasfetch update
 ```
 
-The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/atlasfetch`. It finds the checkout through `ATLASFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `ATLASFETCH_SRC=/path/to/atlasfetch` to choose one explicitly.
+The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/atlasfetch` (on Windows, see [Windows](#windows)). It finds the checkout through `ATLASFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `ATLASFETCH_SRC=/path/to/atlasfetch` to choose one explicitly.
 
 ### Start with your shell
 
@@ -354,6 +354,66 @@ fi
 ```
 
 Starting the live workspace from the shell it launches would nest one shell inside another, so use `fetch` in shell startup files.
+
+## Windows
+
+AtlasFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program. The fetch, the editor, the JSON output and the monitor work as on Linux. Fields that have no Windows source are hidden, as listed below.
+
+### Install
+
+Download `atlasfetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\atlasfetch-v3.0.0-x86_64-pc-windows-msvc.zip
+```
+
+Extract `atlasfetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
+
+To build from source, install Rust with the MSVC toolchain and the Visual Studio C++ build tools, then run:
+
+```powershell
+git clone https://github.com/mafuzyk/atlasfetch.git
+cd atlasfetch
+cargo install --path . --locked
+```
+
+`cargo install` places `atlasfetch.exe` in `%USERPROFILE%\.cargo\bin`. To greet every PowerShell session, add `atlasfetch fetch` to your PowerShell profile (`$PROFILE`).
+
+### Configuration
+
+The configuration is `%APPDATA%\atlasfetch\config.json`. `atlasfetch config path` prints the path in use, and `-c` selects another file as on Linux. Your own logos go in the `logos` folder next to it. A logo pasted in the editor is saved there as `custom-logo.txt`.
+
+### Updating
+
+`atlasfetch update` needs a source checkout, with `git` and `cargo` on `PATH`. It builds `target\release\atlasfetch.exe` and installs it to `%LOCALAPPDATA%\Programs\atlasfetch\atlasfetch.exe`. Windows does not let a running program be overwritten, so the installed copy is renamed to `atlasfetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add. Release archives are not updated by this command; replace `atlasfetch.exe` yourself.
+
+### What is shown
+
+| Fields | Where the value comes from |
+|---|---|
+| OS, Kernel, Arch, Locale, Uptime | Registry product name, display version and build; native system information; the user's default locale; time since boot |
+| User, Host, Device | The user name; the computer name; the BIOS manufacturer and product from the registry |
+| CPU, CPU Usage | Processor name and clock from the registry, thread count; CPU usage is live, monitor only |
+| GPU | Display adapter names from the registry. VRAM is not shown, because Windows does not report VRAM use without DirectX APIs |
+| Memory, Swap, Disk | Physical memory; the page file as swap; the system drive |
+| Battery | The system power status. Absent on machines without a battery |
+| Resolution | Attached displays and their current modes |
+| Local IP | An up Ethernet or Wi-Fi adapter when there is one, otherwise another up adapter. Link-local `169.254.x.x` addresses are skipped |
+| WM | Always `Desktop Window Manager`, the compositor on Windows 8 and later |
+| Packages | Scoop and Chocolatey counts, such as `34 (scoop), 12 (choco)`. Winget and Microsoft Store packages are not counted |
+| Shell, Terminal, Processes | One process list: the nearest known shell in the parent processes (PowerShell, Windows PowerShell, cmd, bash, zsh, fish, nu, elvish, xonsh), and the terminal that hosts it |
+
+These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, VRAM, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
+
+Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. In the classic console, AtlasFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
+
+### Monitor
+
+`atlasfetch monitor` starts the shell from `$SHELL` when that names an existing file. Otherwise it uses `pwsh.exe`, then `powershell.exe`, then `%COMSPEC%` (normally `cmd.exe`). Bash, zsh and fish start with `-i`. PowerShell and cmd start without arguments. Git Bash sets `$SHELL` to a path Windows cannot open, so PowerShell is used unless you set `SHELL` to a Windows path. `Ctrl+Q` closes the workspace.
+
+### Pasting a logo
+
+Legacy consoles do not deliver a paste as a paste event, so the editor offers **Paste logo from clipboard** in the Logo section on Windows. Press `Enter` on it to use the clipboard text as the logo, which is saved with the configuration when you save.
 
 ## Machine-readable output
 
@@ -420,18 +480,21 @@ Important modules:
 | `src/cli.rs` | Commands and flags (clap); legacy flags are hidden |
 | `src/config.rs` | Schema version 3, defaults, validation, migration, atomic saving |
 | `src/field.rs` | The 32 fields: keys, labels, icons, groups, gauges |
-| `src/info/` | Detection and live readings from `/proc`, `/sys` and a few local commands |
+| `src/info/linux/` | Detection and live readings from `/proc`, `/sys` and a few local commands |
+| `src/info/windows/` | Detection through Win32 calls and read-only registry values |
 | `src/render/scene.rs` | The three scenes and their fallbacks |
 | `src/render/blocks.rs` | Information rows, bars, gauges, titles and color blocks |
 | `src/render/mod.rs` | Styled canvas, text width and output conversion |
 | `src/logo.rs` | Logo discovery, cleaning and coloring |
 | `src/theme.rs` | Built-in palettes and gradients |
-| `src/tui/` | Setup editor: state and keys (`app.rs`), drawing (`view.rs`), terminal lifecycle (`mod.rs`) |
+| `src/tui/` | Setup editor: state and keys (`app.rs`), drawing (`view.rs`), terminal lifecycle (`mod.rs`), Windows clipboard (`clipboard.rs`) |
 | `src/live.rs` | Monitor workspace: PTY shell and VT100 rendering |
 | `src/output.rs` | JSON output, schema version 2 |
 | `src/benchmark.rs` | Timing of collection and rendering |
 | `src/update.rs` | Updater for source checkouts |
 | `build.rs` | Embeds the `logos/` directory in the binary |
+
+CI runs clippy, the tests and the release build on Ubuntu and Windows. The formatting check runs on Ubuntu.
 
 Contributions and bug reports are welcome. Please include the terminal emulator, shell, terminal dimensions, selected scene and relevant configuration when reporting a layout problem. The terminal is part of the rendering environment.
 
@@ -444,8 +507,8 @@ Contributions and bug reports are welcome. Please include the terminal emulator,
 - [x] Monitor workspace with a real PTY-backed shell
 - [x] Versioned JSON output and a built-in benchmark
 - [x] Atomic configuration writes and migration from versions 1 and 2
-- [x] GNU and musl release artifacts with SHA-256 checksums
-- [x] CI with formatting, lints, tests and release builds
+- [x] GNU, musl and Windows (MSVC) release artifacts with SHA-256 checksums
+- [x] CI with formatting, lints, tests and release builds on Linux and Windows
 - [ ] Generate a complete configuration from CLI flags
 - [ ] AUR package and Gentoo ebuild
 - [ ] ARM64 and signed release artifacts
