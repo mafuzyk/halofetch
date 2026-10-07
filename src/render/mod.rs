@@ -4,6 +4,9 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::Color;
 
+pub mod blocks;
+pub mod scene;
+
 const RESET: &str = "\x1b[0m";
 const ELLIPSIS: char = '\u{2026}';
 
