@@ -9,15 +9,23 @@ jobs:
   build:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             packages: ""
-          - target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
             packages: musl-tools
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            packages: ""
+            archive: zip
     steps:
       - uses: actions/checkout@v4
 
@@ -39,16 +47,31 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package binary
+        if: matrix.archive == 'tar.gz'
         run: |
           archive="atlasfetch-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
           tar -czf "$archive" -C "target/${{ matrix.target }}/release" atlasfetch
           sha256sum "$archive" > "$archive.sha256"
+
+      - name: Package binary (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $archive = "atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $files = @(
+            "target/${{ matrix.target }}/release/atlasfetch.exe",
+            "LICENSE",
+            "README.md"
+          )
+          Compress-Archive -Path $files -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          Set-Content -Path "$archive.sha256" -Value "$hash  $archive" -Encoding ascii
 
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}.sha256
           generate_release_notes: true
