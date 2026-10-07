@@ -1,6 +1,8 @@
 //! Interactive setup editor. [`run`] takes over the terminal until the user saves or quits.
 
 mod app;
+#[cfg(windows)]
+mod clipboard;
 mod input;
 mod view;
 
@@ -31,26 +33,39 @@ impl TerminalSession {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode()?;
         let session = TerminalSession;
-        execute!(
-            io::stdout(),
-            EnterAlternateScreen,
-            EnableBracketedPaste,
-            cursor::Hide
-        )?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        enable_bracketed_paste()?;
+        execute!(io::stdout(), cursor::Hide)?;
         Ok(session)
     }
 }
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        let _ = execute!(
-            io::stdout(),
-            cursor::Show,
-            DisableBracketedPaste,
-            LeaveAlternateScreen
-        );
+        let _ = execute!(io::stdout(), cursor::Show);
+        disable_bracketed_paste();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
+}
+
+/// Makes pasted text arrive as one `Event::Paste`. Legacy Windows consoles cannot take
+/// the mode; there pasted text arrives as key presses, so that failure is not fatal.
+#[cfg(windows)]
+pub(crate) fn enable_bracketed_paste() -> io::Result<()> {
+    let _ = execute!(io::stdout(), EnableBracketedPaste);
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn enable_bracketed_paste() -> io::Result<()> {
+    execute!(io::stdout(), EnableBracketedPaste)
+}
+
+/// Errors are ignored: this runs while the terminal is being restored, and the
+/// alternate screen must still be left afterwards.
+pub(crate) fn disable_bracketed_paste() {
+    let _ = execute!(io::stdout(), DisableBracketedPaste);
 }
 
 /// Runs the editor. Returns the configuration when the user saved, `None` when they quit

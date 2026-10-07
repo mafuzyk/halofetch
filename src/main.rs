@@ -190,10 +190,33 @@ fn static_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-/// Colors are dropped only for piped output that asked for `NO_COLOR`.
+/// Colors are dropped for piped output that asked for `NO_COLOR`, and everywhere the
+/// console cannot show ANSI escapes.
 fn plain_output() -> bool {
-    !io::stdout().is_terminal()
-        && std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+    !ansi_supported()
+        || (!io::stdout().is_terminal()
+            && std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()))
+}
+
+/// Legacy Windows consoles show escapes as garbage until virtual terminal processing is
+/// on. crossterm turns it on here and caches the answer.
+#[cfg(windows)]
+fn ansi_supported() -> bool {
+    crossterm::ansi_support::supports_ansi()
+}
+
+#[cfg(not(windows))]
+fn ansi_supported() -> bool {
+    true
+}
+
+/// Rendered lines for the terminal: ANSI, or plain text when the console cannot show it.
+fn styled_text(lines: &[Line]) -> String {
+    if ansi_supported() {
+        render::to_ansi(lines)
+    } else {
+        render::to_plain(lines)
+    }
 }
 
 /// Writes `text` to stdout. A closed pipe, as in `atlasfetch logos list | head`, is
@@ -304,7 +327,7 @@ fn swatch(colors: &[Color]) -> String {
         .map(|&color| Span::new("  ", Style::new().bg(color)))
         .collect();
     let line = Line::from_spans(spans);
-    render::to_ansi(&[line]).trim_end().to_string()
+    styled_text(&[line]).trim_end().to_string()
 }
 
 fn padded(text: &str, width: usize) -> String {
@@ -354,7 +377,7 @@ fn show_logo(key: Option<&str>) -> Result<()> {
         }
     };
     let lines = logo::colorize(&shown, &cfg.colors.palette, cfg.logo.gradient);
-    emit(&render::to_ansi(&lines))
+    emit(&styled_text(&lines))
 }
 
 #[cfg(test)]

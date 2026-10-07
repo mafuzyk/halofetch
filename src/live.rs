@@ -5,17 +5,17 @@
 //! with it, up to 60% of the screen.
 
 use std::io::{self, Read, Write};
+#[cfg(not(windows))]
 use std::path::Path;
+#[cfg(any(windows, test))]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::eyre;
 use color_eyre::Result;
-use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -31,6 +31,7 @@ use crate::info::{self, CpuSampler, SysInfo};
 use crate::logo::LogoSet;
 use crate::render::scene::RenderCtx;
 use crate::render::{self, Line};
+use crate::tui::{disable_bracketed_paste, enable_bracketed_paste};
 
 /// The information region takes at most this share of the screen height.
 const MONITOR_MAX_PERCENT: u32 = 60;
@@ -286,6 +287,7 @@ impl Shell {
 /// The user's shell, interactive. Fish runs with its greeting removed and its
 /// terminal query disabled: a greeting that runs another fetch delays the prompt, and
 /// the embedded terminal does not answer the queries.
+#[cfg(not(windows))]
 fn shell_command() -> CommandBuilder {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let shell_name = Path::new(&shell)
@@ -306,12 +308,56 @@ fn shell_command() -> CommandBuilder {
     command
 }
 
+/// The shell on Windows: `$SHELL` when it names an existing file (Git Bash exports an
+/// MSYS path that Windows cannot start), else PowerShell, else the console interpreter.
+/// No arguments and no `TERM`: these shells do not take the Unix options.
+#[cfg(windows)]
+fn shell_command() -> CommandBuilder {
+    let shell = windows_shell(
+        std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file()),
+        find_on_path,
+        std::env::var_os("COMSPEC").map(PathBuf::from),
+    );
+    let mut command = CommandBuilder::new(shell);
+    if let Ok(cwd) = std::env::current_dir() {
+        command.cwd(cwd);
+    }
+    command
+}
+
+/// The order of the Windows shell choice. Pure, so the order is tested on every platform.
+#[cfg(any(windows, test))]
+fn windows_shell(
+    shell: Option<PathBuf>,
+    find: impl Fn(&str) -> Option<PathBuf>,
+    comspec: Option<PathBuf>,
+) -> PathBuf {
+    shell
+        .or_else(|| find("pwsh.exe"))
+        .or_else(|| find("powershell.exe"))
+        .or(comspec)
+        .unwrap_or_else(|| PathBuf::from("cmd.exe"))
+}
+
+/// The first file called `name` in the directories listed in `PATH`.
+#[cfg(windows)]
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 struct LiveTerminal;
 
 impl LiveTerminal {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode()?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste) {
+        let entered =
+            execute!(io::stdout(), EnterAlternateScreen).and_then(|()| enable_bracketed_paste());
+        if let Err(error) = entered {
             let _ = terminal::disable_raw_mode();
             return Err(error.into());
         }
@@ -321,7 +367,8 @@ impl LiveTerminal {
 
 impl Drop for LiveTerminal {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        disable_bracketed_paste();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -465,9 +512,19 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_bytes, paste_bytes, shell_size, split};
+    use super::{key_bytes, paste_bytes, shell_size, split, windows_shell};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
+    use std::path::PathBuf;
+
+    /// A `PATH` lookup that finds exactly the listed names.
+    fn on_path(names: &'static [&'static str]) -> impl Fn(&str) -> Option<PathBuf> {
+        move |name| {
+            names
+                .contains(&name)
+                .then(|| PathBuf::from(format!(r"C:\bin\{name}")))
+        }
+    }
 
     #[test]
     fn region_fits_its_content_and_leaves_the_rest_to_the_shell() {
@@ -513,5 +570,37 @@ mod tests {
     #[test]
     fn paste_cannot_end_itself_early() {
         assert_eq!(paste_bytes("a\x1b[201~b", true), b"\x1b[200~ab\x1b[201~");
+    }
+
+    #[test]
+    fn windows_shell_uses_the_environment_shell_first() {
+        let shell = windows_shell(
+            Some(PathBuf::from(r"C:\tools\bash.exe")),
+            on_path(&["pwsh.exe"]),
+            None,
+        );
+        assert_eq!(shell, PathBuf::from(r"C:\tools\bash.exe"));
+    }
+
+    #[test]
+    fn windows_shell_prefers_pwsh_then_windows_powershell() {
+        let both = on_path(&["pwsh.exe", "powershell.exe"]);
+        assert_eq!(
+            windows_shell(None, &both, None),
+            PathBuf::from(r"C:\bin\pwsh.exe")
+        );
+        let legacy = on_path(&["powershell.exe"]);
+        assert_eq!(
+            windows_shell(None, &legacy, None),
+            PathBuf::from(r"C:\bin\powershell.exe")
+        );
+    }
+
+    #[test]
+    fn windows_shell_falls_back_to_comspec_then_cmd() {
+        let none = on_path(&[]);
+        let comspec = PathBuf::from(r"C:\Windows\system32\cmd.exe");
+        assert_eq!(windows_shell(None, &none, Some(comspec.clone())), comspec);
+        assert_eq!(windows_shell(None, &none, None), PathBuf::from("cmd.exe"));
     }
 }

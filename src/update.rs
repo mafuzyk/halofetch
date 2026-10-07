@@ -7,6 +7,13 @@ use color_eyre::{
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// File name of the release binary cargo writes, and of the installed command.
+const EXECUTABLE: &str = if cfg!(windows) {
+    "atlasfetch.exe"
+} else {
+    "atlasfetch"
+};
+
 pub fn run() -> Result<()> {
     let source = detect_source_dir()?;
     println!("atlasfetch update — source: {}", source.display());
@@ -25,8 +32,8 @@ pub fn run() -> Result<()> {
         "cargo build",
     )?;
 
-    let binary = source.join("target/release/atlasfetch");
-    let destination = install_path();
+    let binary = source.join("target").join("release").join(EXECUTABLE);
+    let destination = install_path()?;
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -110,11 +117,23 @@ fn is_source_dir(path: &Path) -> bool {
         && path.join("src/main.rs").exists()
 }
 
-fn install_path() -> PathBuf {
+#[cfg(not(windows))]
+fn install_path() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    home.join(".local/bin/atlasfetch")
+    Ok(home.join(".local/bin/atlasfetch"))
+}
+
+#[cfg(windows)]
+fn install_path() -> Result<PathBuf> {
+    let dirs = directories::BaseDirs::new()
+        .ok_or_else(|| eyre!("cannot determine the local application data directory"))?;
+    Ok(dirs
+        .data_local_dir()
+        .join("Programs")
+        .join("atlasfetch")
+        .join(EXECUTABLE))
 }
 
 fn run_command(command: &mut Command, label: &str) -> Result<()> {
@@ -128,6 +147,7 @@ fn run_command(command: &mut Command, label: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
     if !binary.is_file() {
         bail!("release build did not produce {}", binary.display());
@@ -144,14 +164,69 @@ fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A running executable cannot be overwritten on Windows but can be renamed, so the
+/// installed copy is moved aside first. The previous copy is removed when it is no
+/// longer in use.
+#[cfg(windows)]
+fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
+    if !binary.is_file() {
+        bail!("release build did not produce {}", binary.display());
+    }
+
+    let previous = destination.with_extension("exe.old");
+    let _ = std::fs::remove_file(&previous);
+    if destination.exists() {
+        std::fs::rename(destination, &previous)?;
+    }
+    std::fs::copy(binary, destination)?;
+
+    if let Some(dir) = destination.parent() {
+        if !on_path(dir, &std::env::var_os("PATH").unwrap_or_default()) {
+            println!(
+                "Add {} to your PATH to run atlasfetch from any terminal.",
+                dir.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir` is one of the entries of `path_var`. Windows paths compare without
+/// regard to case and to a trailing separator.
+#[cfg(any(windows, test))]
+fn on_path(dir: &Path, path_var: &std::ffi::OsStr) -> bool {
+    let wanted = normalized_dir(dir);
+    std::env::split_paths(path_var).any(|entry| normalized_dir(&entry) == wanted)
+}
+
+#[cfg(any(windows, test))]
+fn normalized_dir(dir: &Path) -> String {
+    dir.to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_ascii_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_source_dir;
+    use super::{is_source_dir, on_path};
+    use std::path::Path;
 
     #[test]
     fn repository_root_is_detected_as_source() {
         assert!(is_source_dir(std::path::Path::new(env!(
             "CARGO_MANIFEST_DIR"
         ))));
+    }
+
+    #[test]
+    fn path_lookup_ignores_case_and_trailing_separator() {
+        let path =
+            std::env::join_paths([r"\Windows", r"\Users\Me\AppData\Local\Programs\AtlasFetch\"])
+                .unwrap();
+        assert!(on_path(
+            Path::new(r"\users\me\appdata\local\programs\atlasfetch"),
+            &path
+        ));
+        assert!(!on_path(Path::new(r"\Users\Me\bin"), &path));
     }
 }

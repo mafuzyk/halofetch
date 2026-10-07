@@ -128,6 +128,10 @@ pub enum Setting {
     LogoSource,
     LogoCompact,
     LogoPath,
+    /// Legacy Windows consoles do not turn pastes into `Event::Paste`, so the logo can be
+    /// taken from the clipboard instead.
+    #[cfg(windows)]
+    PasteLogo,
 }
 
 impl Setting {
@@ -156,6 +160,8 @@ impl Setting {
             Self::LogoSource => "Source",
             Self::LogoCompact => "Compact on narrow terminals",
             Self::LogoPath => "File path",
+            #[cfg(windows)]
+            Self::PasteLogo => "Paste logo from clipboard",
         }
     }
 
@@ -518,6 +524,8 @@ impl App {
                 LogoSource::File { path } => path.clone(),
                 _ => String::new(),
             },
+            #[cfg(windows)]
+            Setting::PasteLogo => "press Enter".to_string(),
         }
     }
 
@@ -563,6 +571,8 @@ impl App {
                 if matches!(self.cfg.logo.source, LogoSource::File { .. }) {
                     rows.push(Setting::LogoPath);
                 }
+                #[cfg(windows)]
+                rows.push(Setting::PasteLogo);
                 rows
             }
             Section::Fields => Vec::new(),
@@ -1038,6 +1048,8 @@ impl App {
     fn activate(&mut self, setting: Setting) {
         match setting {
             Setting::Theme => self.open_themes(),
+            #[cfg(windows)]
+            Setting::PasteLogo => self.paste_clipboard_logo(),
             s if s.is_bool() => self.toggle(s),
             s if s.is_text() => self.open_text(s),
             s if s.is_choice() => self.adjust(s, 1),
@@ -1336,6 +1348,14 @@ impl App {
             format!("Pasted logo ({lines} lines) — saved with the config"),
             false,
         );
+    }
+
+    #[cfg(windows)]
+    fn paste_clipboard_logo(&mut self) {
+        match super::clipboard::read_text() {
+            Some(text) => self.paste_logo(&text),
+            None => self.set_status("The clipboard holds no text", true),
+        }
     }
 
     // ── Fields section ───────────────────────────────────────────────────
@@ -2191,5 +2211,30 @@ mod tests {
         app.handle_event(Event::Key(release));
         assert_eq!(app.cfg.colors.palette, before);
         assert!(!app.welcome_visible());
+    }
+
+    #[test]
+    fn enter_release_does_not_activate_a_row() {
+        let mut app = new_app();
+        enter_section(&mut app, Section::Appearance);
+        let release = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        };
+        app.handle_event(Event::Key(release));
+        assert!(app.popup.is_none());
+    }
+
+    #[test]
+    fn clipboard_logo_row_is_offered_only_on_windows() {
+        let app = new_app();
+        let labels: Vec<&str> = app
+            .section_rows(Section::Logo)
+            .into_iter()
+            .map(Setting::label)
+            .collect();
+        assert_eq!(labels.contains(&"Paste logo from clipboard"), cfg!(windows));
     }
 }

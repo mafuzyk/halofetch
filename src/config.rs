@@ -366,6 +366,11 @@ pub fn config_dir() -> Result<PathBuf> {
     if let Some(path) = CONFIG_OVERRIDE.get() {
         return config_parent(path);
     }
+    default_config_dir()
+}
+
+#[cfg(not(windows))]
+fn default_config_dir() -> Result<PathBuf> {
     // The XDG spec says relative values must be ignored.
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -375,6 +380,12 @@ pub fn config_dir() -> Result<PathBuf> {
     }
     let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
     Ok(base.home_dir().join(".config").join("atlasfetch"))
+}
+
+#[cfg(windows)]
+fn default_config_dir() -> Result<PathBuf> {
+    let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
+    Ok(base.config_dir().join("atlasfetch"))
 }
 
 pub fn config_path() -> Result<PathBuf> {
