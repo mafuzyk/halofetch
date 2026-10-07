@@ -1,30 +1,317 @@
+//! Monitor workspace: system metrics refreshed in place above an embedded shell.
+//!
+//! The shell runs in a pseudo-terminal and is drawn through a `vt100` parser, so it
+//! behaves like a normal terminal session. The upper region shows the scene and grows
+//! with it, up to 60% of the screen.
+
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use color_eyre::eyre::eyre;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::Text;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::component::{self, Component, RenderCtx, SceneOutput};
-use crate::{ascii, config, info};
+use crate::config::{Config, Scene};
+use crate::info::{self, CpuSampler, SysInfo};
+use crate::logo::LogoSet;
+use crate::render::scene::RenderCtx;
+use crate::render::{self, Line};
+
+/// The information region takes at most this share of the screen height.
+const MONITOR_MAX_PERCENT: u32 = 60;
+const SCROLLBACK_LINES: usize = 10_000;
+const EVENT_POLL: Duration = Duration::from_millis(33);
+const BORDER_COLOR: TuiColor = TuiColor::Rgb(157, 133, 255);
+const SHELL_BORDER_COLOR: TuiColor = TuiColor::Rgb(100, 100, 125);
+const PASTE_START: &str = "\x1b[200~";
+const PASTE_END: &str = "\x1b[201~";
+
+type Term = Terminal<CrosstermBackend<io::Stdout>>;
+
+pub fn run(cfg: &Config, interval_ms: u64, scene: Scene) -> Result<()> {
+    let system = info::collect();
+    let logos = cfg.logo_set(&system);
+    let mut workspace = Workspace {
+        cfg,
+        scene,
+        interval_ms,
+        system,
+        logos,
+        sampler: CpuSampler::new(),
+    };
+
+    let (columns, rows) = terminal::size()?;
+    let area = Rect::new(0, 0, columns, rows);
+    let [_, shell_area] = split(area, workspace.lines(area).len());
+    let (shell_rows, shell_cols) = shell_size(shell_area);
+    let mut shell = Shell::spawn(shell_rows, shell_cols)?;
+
+    let _session = LiveTerminal::enter()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let interval = Duration::from_millis(interval_ms);
+    let mut next_refresh = Instant::now();
+    let mut dirty = true;
+
+    loop {
+        if Instant::now() >= next_refresh {
+            workspace.refresh();
+            next_refresh = Instant::now() + interval;
+            dirty = true;
+        }
+        let shell_changed = shell.dirty.swap(false, Ordering::AcqRel);
+        if dirty || shell_changed {
+            workspace.draw(&mut terminal, &mut shell)?;
+            dirty = false;
+        }
+        if shell.exited() {
+            break;
+        }
+        if !event::poll(EVENT_POLL)? {
+            continue;
+        }
+        match event::read()? {
+            Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+                if is_quit(key) {
+                    break;
+                }
+                let bytes = key_bytes(key);
+                if !shell.send(&bytes) {
+                    break;
+                }
+            }
+            Event::Paste(text) => {
+                let bytes = paste_bytes(&text, shell.bracketed_paste());
+                if !shell.send(&bytes) {
+                    break;
+                }
+            }
+            Event::Resize(..) => dirty = true,
+            _ => {}
+        }
+    }
+    shell.kill();
+    Ok(())
+}
+
+/// What the monitor shows: the configuration, the system values and the scene.
+struct Workspace<'a> {
+    cfg: &'a Config,
+    scene: Scene,
+    interval_ms: u64,
+    system: SysInfo,
+    logos: LogoSet,
+    sampler: CpuSampler,
+}
+
+impl Workspace<'_> {
+    fn refresh(&mut self) {
+        info::refresh_live(&mut self.system, &mut self.sampler);
+    }
+
+    /// Scene lines for the information region of a screen `area`.
+    fn lines(&self, area: Rect) -> Vec<Line> {
+        let ctx = RenderCtx {
+            info: &self.system,
+            cfg: self.cfg,
+            logos: &self.logos,
+            width: usize::from(area.width.saturating_sub(2)),
+        };
+        render::scene::render(self.scene, &ctx)
+    }
+
+    /// Draws both regions. The shell is resized to its region first, so a scene that
+    /// grew or shrank also resizes the shell.
+    fn draw(&self, terminal: &mut Term, shell: &mut Shell) -> Result<()> {
+        let size = terminal.size()?;
+        let area = Rect::new(0, 0, size.width, size.height);
+        let lines = self.lines(area);
+        let [monitor_area, shell_area] = split(area, lines.len());
+        let (rows, cols) = shell_size(shell_area);
+        shell.resize(rows, cols)?;
+        terminal.draw(|frame| {
+            render_monitor(frame, monitor_area, &lines, self.interval_ms);
+            if let Ok(parser) = shell.parser.lock() {
+                render_shell(frame, shell_area, parser.screen());
+            }
+        })?;
+        Ok(())
+    }
+}
+
+/// The information region fits its content, capped at 60% of the height. The shell
+/// gets everything below it.
+fn split(area: Rect, content_lines: usize) -> [Rect; 2] {
+    let cap = u32::from(area.height) * MONITOR_MAX_PERCENT / 100;
+    let wanted = u32::try_from(content_lines.saturating_add(2)).unwrap_or(u32::MAX);
+    let height = u16::try_from(cap.min(wanted)).unwrap_or(area.height);
+    let [top, bottom] =
+        Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(area);
+    [top, bottom]
+}
+
+/// PTY size inside the borders of a region. Never zero, because a zero-sized PTY is
+/// rejected by some systems.
+fn shell_size(region: Rect) -> (u16, u16) {
+    (
+        region.height.saturating_sub(2).max(1),
+        region.width.saturating_sub(2).max(1),
+    )
+}
+
+struct Shell {
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn Child + Send + Sync>,
+    writer: Box<dyn Write + Send>,
+    parser: Arc<Mutex<vt100::Parser>>,
+    /// Set by the reader thread when the shell printed something.
+    dirty: Arc<AtomicBool>,
+    rows: u16,
+    cols: u16,
+}
+
+impl Shell {
+    fn spawn(rows: u16, cols: u16) -> Result<Shell> {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| eyre!("failed to open shell PTY: {error}"))?;
+        let child = pair
+            .slave
+            .spawn_command(shell_command())
+            .map_err(|error| eyre!("failed to start shell: {error}"))?;
+        drop(pair.slave);
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| eyre!("failed to read shell PTY: {error}"))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| eyre!("failed to write shell PTY: {error}"))?;
+
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, SCROLLBACK_LINES)));
+        let dirty = Arc::new(AtomicBool::new(true));
+        let reader_parser = Arc::clone(&parser);
+        let reader_dirty = Arc::clone(&dirty);
+        std::thread::spawn(move || {
+            let mut bytes = [0_u8; 8192];
+            while let Ok(count) = reader.read(&mut bytes) {
+                if count == 0 {
+                    break;
+                }
+                if let Ok(mut parser) = reader_parser.lock() {
+                    parser.process(&bytes[..count]);
+                    reader_dirty.store(true, Ordering::Release);
+                }
+            }
+        });
+
+        Ok(Shell {
+            master: pair.master,
+            child,
+            writer,
+            parser,
+            dirty,
+            rows,
+            cols,
+        })
+    }
+
+    fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+        if (rows, cols) == (self.rows, self.cols) {
+            return Ok(());
+        }
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| eyre!("failed to resize shell PTY: {error}"))?;
+        if let Ok(mut parser) = self.parser.lock() {
+            parser.set_size(rows, cols);
+        }
+        self.rows = rows;
+        self.cols = cols;
+        Ok(())
+    }
+
+    /// Whether the shell asked for bracketed paste. Pastes are wrapped only then.
+    fn bracketed_paste(&self) -> bool {
+        self.parser
+            .lock()
+            .is_ok_and(|parser| parser.screen().bracketed_paste())
+    }
+
+    /// `false` when the shell no longer accepts input.
+    fn send(&mut self, bytes: &[u8]) -> bool {
+        if bytes.is_empty() {
+            return true;
+        }
+        self.writer
+            .write_all(bytes)
+            .and_then(|()| self.writer.flush())
+            .is_ok()
+    }
+
+    fn exited(&mut self) -> bool {
+        !matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn kill(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
+/// The user's shell, interactive. Fish runs with its greeting removed and its
+/// terminal query disabled: a greeting that runs another fetch delays the prompt, and
+/// the embedded terminal does not answer the queries.
+fn shell_command() -> CommandBuilder {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let shell_name = Path::new(&shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let mut command = CommandBuilder::new(&shell);
+    command.arg("-i");
+    if shell_name == "fish" {
+        command.arg("--features=no-query-term");
+        command.arg("-C");
+        command.arg("functions --erase fish_greeting");
+    }
+    command.env("TERM", "xterm-256color");
+    if let Ok(cwd) = std::env::current_dir() {
+        command.cwd(cwd);
+    }
+    command
+}
 
 struct LiveTerminal;
 
 impl LiveTerminal {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode()?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen) {
+        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste) {
             let _ = terminal::disable_raw_mode();
             return Err(error.into());
         }
@@ -34,219 +321,23 @@ impl LiveTerminal {
 
 impl Drop for LiveTerminal {
     fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
     }
 }
 
-pub fn run(interval_ms: u64, scene: Option<&str>) -> Result<()> {
-    ascii::ensure_logos()?;
-    let cfg = config::Config::load()?;
-    let scene = scene.map(str::parse).transpose()?.unwrap_or(cfg.scene);
-    let ascii_art = ascii::load(&cfg)?;
-    let mut system_info = info::collect()?;
-    let ascii_component = component::ascii::AsciiComponent::new(ascii_art);
-    let system_component = component::system::SystemComponent;
-    let monitor_component = component::monitor::MonitorComponent::new();
-    let companion_component = component::companion::CompanionComponent;
-    let components: Vec<&dyn Component> = vec![
-        &ascii_component,
-        &system_component,
-        &monitor_component,
-        &companion_component,
-    ];
-
-    let (cols, rows) = terminal::size()?;
-    let initial_shell_rows = shell_rows(rows);
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: initial_shell_rows,
-            cols: cols.saturating_sub(2).max(1),
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|error| color_eyre::eyre::eyre!("failed to open shell PTY: {error}"))?;
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let shell_name = Path::new(&shell)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let mut command = CommandBuilder::new(&shell);
-    command.arg("-i");
-    // Some Fish presets run another system fetch from `fish_greeting`.
-    // Inside this workspace that delays the prompt and makes buffered input
-    // look frozen. Keep the user's Fish config, but remove only its greeting
-    // from this child shell after the config has loaded.
-    if shell_name == "fish" {
-        // Fish 4.1+ probes terminal capabilities during startup. The embedded
-        // VT renderer does not answer those queries yet, so disable the probe
-        // for this process instead of making every startup wait ten seconds.
-        command.arg("--features=no-query-term");
-        command.arg("-C");
-        command.arg("functions --erase fish_greeting");
-    }
-    command.env("TERM", "xterm-256color");
-    if let Ok(cwd) = std::env::current_dir() {
-        command.cwd(cwd);
-    }
-    let mut child = pair
-        .slave
-        .spawn_command(command)
-        .map_err(|error| color_eyre::eyre::eyre!("failed to start shell: {error}"))?;
-    drop(pair.slave);
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| color_eyre::eyre::eyre!("failed to read shell PTY: {error}"))?;
-    let mut writer = pair
-        .master
-        .take_writer()
-        .map_err(|error| color_eyre::eyre::eyre!("failed to write shell PTY: {error}"))?;
-    let parser = Arc::new(Mutex::new(vt100::Parser::new(
-        initial_shell_rows,
-        cols.saturating_sub(2).max(1),
-        10_000,
-    )));
-    let reader_parser = Arc::clone(&parser);
-    let shell_dirty = Arc::new(AtomicBool::new(true));
-    let reader_dirty = Arc::clone(&shell_dirty);
-    std::thread::spawn(move || {
-        let mut bytes = [0_u8; 8192];
-        while let Ok(count) = reader.read(&mut bytes) {
-            if count == 0 {
-                break;
-            }
-            if let Ok(mut parser) = reader_parser.lock() {
-                parser.process(&bytes[..count]);
-                reader_dirty.store(true, Ordering::Release);
-            }
-        }
-    });
-
-    let _session = LiveTerminal::enter()?;
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
-    let interval = Duration::from_millis(interval_ms);
-    let mut last_refresh = Instant::now() - interval;
-    let mut monitor_dirty = true;
-
-    loop {
-        if last_refresh.elapsed() >= interval {
-            info::refresh_live(&mut system_info);
-            last_refresh = Instant::now();
-            monitor_dirty = true;
-        }
-        let should_draw = monitor_dirty || shell_dirty.swap(false, Ordering::AcqRel);
-        if should_draw {
-            terminal.draw(|frame| {
-                let area = frame.area();
-                let regions = workspace_regions(area);
-                let ctx = RenderCtx {
-                    info: &system_info,
-                    cfg: &cfg,
-                    term_width: regions[0].width.saturating_sub(2).max(1) as usize,
-                    palette: &cfg.logo.colors,
-                };
-                let monitor = component::render_scene(scene, &components, &ctx);
-                render_monitor(frame, regions[0], &monitor, interval_ms);
-                if let Ok(parser) = parser.lock() {
-                    render_shell(frame, regions[1], parser.screen());
-                }
-            })?;
-            monitor_dirty = false;
-        }
-
-        if child.try_wait()?.is_some() {
-            break;
-        }
-        if event::poll(Duration::from_millis(33))? {
-            match event::read()? {
-                Event::Key(key)
-                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
-                    if key.code == KeyCode::Char('q')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
-                        child.kill()?;
-                        break;
-                    }
-                    let bytes = key_bytes(key);
-                    if !bytes.is_empty() {
-                        writer.write_all(&bytes)?;
-                        writer.flush()?;
-                    }
-                }
-                Event::Resize(width, height) => {
-                    let rows = shell_rows(height);
-                    let cols = width.saturating_sub(2).max(1);
-                    pair.master
-                        .resize(PtySize {
-                            rows,
-                            cols,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        })
-                        .map_err(|error| {
-                            color_eyre::eyre::eyre!("failed to resize shell PTY: {error}")
-                        })?;
-                    if let Ok(mut parser) = parser.lock() {
-                        parser.set_size(rows, cols);
-                    }
-                    terminal.resize(Rect::new(0, 0, width, height))?;
-                    monitor_dirty = true;
-                }
-                Event::Paste(text) => writer.write_all(text.as_bytes())?,
-                _ => {}
-            }
-        }
-    }
-    Ok(())
+fn is_quit(key: KeyEvent) -> bool {
+    key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
-fn workspace_regions(area: Rect) -> [Rect; 2] {
-    let monitor_percent = if area.height < 30 { 40 } else { 55 };
-    let regions = Layout::vertical([
-        Constraint::Percentage(monitor_percent),
-        Constraint::Percentage(100 - monitor_percent),
-    ])
-    .split(area);
-    [regions[0], regions[1]]
-}
-
-fn shell_rows(total_rows: u16) -> u16 {
-    let area = Rect::new(0, 0, 80, total_rows);
-    workspace_regions(area)[1].height.saturating_sub(2).max(1)
-}
-
-fn render_monitor(frame: &mut Frame, area: Rect, output: &SceneOutput, interval_ms: u64) {
-    let lines = output
-        .lines
-        .iter()
-        .map(|line| {
-            Line::from(
-                line.iter()
-                    .map(|span| {
-                        let mut style = Style::default();
-                        if let Some(color) = span.fg {
-                            style = style.fg(TuiColor::Rgb(color.r, color.g, color.b));
-                        }
-                        if span.bold {
-                            style = style.add_modifier(Modifier::BOLD);
-                        }
-                        Span::styled(span.text.clone(), style)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<Vec<_>>();
+fn render_monitor(frame: &mut Frame, area: Rect, lines: &[Line], interval_ms: u64) {
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).block(
+        Paragraph::new(Text::from(render::to_ratatui(lines))).block(
             Block::default()
                 .title(format!(" AtlasFetch · live {interval_ms}ms "))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(TuiColor::Rgb(157, 133, 255))),
+                .border_style(Style::default().fg(BORDER_COLOR)),
         ),
         area,
     );
@@ -257,7 +348,7 @@ fn render_shell(frame: &mut Frame, area: Rect, screen: &vt100::Screen) {
         .title(" Shell · Ctrl+Q closes workspace ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(TuiColor::Rgb(100, 100, 125)));
+        .border_style(Style::default().fg(SHELL_BORDER_COLOR));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     for row in 0..inner.height {
@@ -304,6 +395,21 @@ fn vt_color(color: vt100::Color) -> TuiColor {
     }
 }
 
+/// Bytes sent to the shell for a pasted text. The text is wrapped in bracketed paste
+/// markers only when the shell enabled them, and an end marker inside the text is
+/// removed so it cannot end the paste early.
+fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    if !bracketed {
+        return text.as_bytes().to_vec();
+    }
+    let body = text.replace(PASTE_END, "");
+    let mut bytes = Vec::with_capacity(body.len() + PASTE_START.len() + PASTE_END.len());
+    bytes.extend_from_slice(PASTE_START.as_bytes());
+    bytes.extend_from_slice(body.as_bytes());
+    bytes.extend_from_slice(PASTE_END.as_bytes());
+    bytes
+}
+
 fn key_bytes(key: KeyEvent) -> Vec<u8> {
     let mut bytes = Vec::new();
     if key.modifiers.contains(KeyModifiers::ALT) {
@@ -348,8 +454,7 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
                 9 => 20,
                 10 => 21,
                 11 => 23,
-                12 => 24,
-                _ => unreachable!(),
+                _ => 24,
             };
             bytes.extend_from_slice(format!("\x1b[{suffix}~").as_bytes());
         }
@@ -360,15 +465,27 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_bytes, shell_rows, workspace_regions};
+    use super::{key_bytes, paste_bytes, shell_size, split};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
 
     #[test]
-    fn workspace_always_leaves_room_for_the_shell() {
-        let regions = workspace_regions(Rect::new(0, 0, 120, 40));
-        assert_eq!(regions[0].height + regions[1].height, 40);
-        assert!(shell_rows(40) >= 10);
+    fn region_fits_its_content_and_leaves_the_rest_to_the_shell() {
+        let [monitor, shell] = split(Rect::new(0, 0, 120, 40), 10);
+        assert_eq!((monitor.height, shell.height), (12, 28));
+        assert_eq!(monitor.height + shell.height, 40);
+    }
+
+    #[test]
+    fn region_is_capped_at_sixty_percent_of_the_screen() {
+        let [monitor, shell] = split(Rect::new(0, 0, 120, 40), 100);
+        assert_eq!((monitor.height, shell.height), (24, 16));
+    }
+
+    #[test]
+    fn shell_size_is_the_inside_of_the_border_and_never_zero() {
+        assert_eq!(shell_size(Rect::new(0, 0, 80, 30)), (28, 78));
+        assert_eq!(shell_size(Rect::new(0, 0, 1, 2)), (1, 1));
     }
 
     #[test]
@@ -381,5 +498,20 @@ mod tests {
             key_bytes(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
             b"\x1b[A"
         );
+        assert_eq!(
+            key_bytes(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE)),
+            b"\x1b[24~"
+        );
+    }
+
+    #[test]
+    fn paste_is_raw_unless_the_shell_asked_for_brackets() {
+        assert_eq!(paste_bytes("ls -l", false), b"ls -l");
+        assert_eq!(paste_bytes("ls -l", true), b"\x1b[200~ls -l\x1b[201~");
+    }
+
+    #[test]
+    fn paste_cannot_end_itself_early() {
+        assert_eq!(paste_bytes("a\x1b[201~b", true), b"\x1b[200~ab\x1b[201~");
     }
 }
