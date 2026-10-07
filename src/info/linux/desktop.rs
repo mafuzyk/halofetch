@@ -6,7 +6,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{env_value, read_text, sorted_dir};
+use super::{read_text, sorted_dir};
+use crate::info::env_value;
 
 const SHELLS: [&str; 16] = [
     "bash", "zsh", "fish", "nu", "elvish", "xonsh", "dash", "ksh", "mksh", "tcsh", "csh", "sh",

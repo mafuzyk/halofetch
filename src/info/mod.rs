@@ -1,22 +1,23 @@
 //! System information: one-shot detection, live refresh and display formatting.
 //!
-//! Everything reads `/proc`, `/sys` and the environment directly. `collect` runs the
-//! full detection pass; `refresh_live` re-reads the values that change between frames
-//! and never spawns a process.
+//! The platform detectors live in `linux` and `windows`. This module holds the types,
+//! text formatting and helpers that both platforms share, and the public entry points
+//! that delegate to the detectors of the current platform.
 
-mod desktop;
-mod hardware;
-mod network;
-mod packages;
-mod power;
-mod procs;
-mod system;
+#[cfg(not(windows))]
+mod linux;
+#[cfg(windows)]
+mod windows;
+
+#[cfg(not(windows))]
+use linux as platform;
+#[cfg(windows)]
+use windows as platform;
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-pub use hardware::CpuSampler;
+use regex::Regex;
 
 use crate::field::Field;
 
@@ -24,6 +25,26 @@ const KIB: u64 = 1024;
 const MIB: u64 = KIB * KIB;
 const GIB: u64 = MIB * KIB;
 const TIB: u64 = GIB * KIB;
+
+static CPU_SPEED_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\s*@\s*[\d.]+\s*[GM]Hz$").expect("constant pattern is valid")
+});
+static CPU_CORE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\s+\d+-Core(?:\s+Processor|\s+APU)?$").expect("constant pattern is valid")
+});
+static CPU_TYPE_SUFFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+(?:Processor|APU)$").expect("constant pattern is valid"));
+
+/// DMI strings that firmware uses as placeholders instead of a real model.
+const JUNK_DMI: [&str; 7] = [
+    "To Be Filled By O.E.M.",
+    "System Product Name",
+    "Default string",
+    "System manufacturer",
+    "Not Applicable",
+    "None",
+    "",
+];
 
 /// Bytes in use and the total of a resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +88,7 @@ pub struct SysInfo {
     values: BTreeMap<Field, String>,
     pub gauges: Gauges,
     /// The os-release `ID` followed by each `ID_LIKE` word, lowercase. Used to pick a logo.
+    /// Windows reports `windows_11` or `windows` instead.
     pub os_ids: Vec<String>,
 }
 
@@ -193,145 +215,70 @@ impl SysInfo {
     }
 }
 
+/// Battery charge and state, as shown in the Battery field.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Battery {
+    /// Charge, 0..=1.
+    pub(super) level: f64,
+    /// `Charging`, `Discharging`, `Full` and so on, when the platform reports it.
+    pub(super) status: Option<String>,
+}
+
+impl Battery {
+    /// `"87% (Charging)"`, or `"87%"` without a status.
+    pub(super) fn text(&self) -> String {
+        let percent = format!("{:.0}%", self.level * 100.0);
+        match &self.status {
+            Some(status) => format!("{percent} ({status})"),
+            None => percent,
+        }
+    }
+}
+
+/// Turns successive CPU time counters into the busy fraction between them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CpuSampler {
+    /// Previous (total, idle) counters.
+    previous: Option<(u64, u64)>,
+}
+
+impl CpuSampler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Busy fraction since the previous call, 0..=1. `None` on the first call, when the
+    /// counters are unreadable, or when no time passed.
+    pub fn sample(&mut self) -> Option<f64> {
+        let (total, idle) = platform::cpu_totals()?;
+        self.update(total, idle)
+    }
+
+    fn update(&mut self, total: u64, idle: u64) -> Option<f64> {
+        let (previous_total, previous_idle) = self.previous.replace((total, idle))?;
+        let dtotal = total.saturating_sub(previous_total);
+        let didle = idle.saturating_sub(previous_idle).min(dtotal);
+        if dtotal == 0 {
+            return None;
+        }
+        Some((dtotal - didle) as f64 / dtotal as f64)
+    }
+}
+
 /// Detects everything once. Never fails, never panics and never sleeps. The live
 /// values (CPU and GPU usage) are left to [`refresh_live`].
 pub fn collect() -> SysInfo {
     let mut info = SysInfo::default();
-    let parent = std::os::unix::process::parent_id();
-
-    std::thread::scope(|scope| {
-        let procs = scope.spawn(procs::ProcTable::scan);
-        let packages = scope.spawn(packages::collect);
-        let gpu = scope.spawn(hardware::gpu_name);
-        let wifi = scope.spawn(network::wifi);
-        let font = scope.spawn(desktop::font);
-
-        put(&mut info, Field::User, system::user());
-        put(&mut info, Field::Host, system::host());
-        put(&mut info, Field::Device, system::device());
-        let (os, os_ids) = system::os_release();
-        put(&mut info, Field::Os, os);
-        info.os_ids = os_ids;
-        put(&mut info, Field::Kernel, system::kernel());
-        put(&mut info, Field::Arch, system::arch());
-        put(
-            &mut info,
-            Field::Uptime,
-            system::uptime_secs().map(system::format_uptime),
-        );
-        put(&mut info, Field::Locale, system::locale());
-        put(&mut info, Field::Load, system::load());
-        put(&mut info, Field::Cpu, hardware::cpu());
-        let cpu_temp = hardware::cpu_temp();
-        info.gauges.cpu_temp = cpu_temp;
-        put(&mut info, Field::CpuTemp, cpu_temp.map(format_celsius));
-        let (memory, swap) = hardware::memory();
-        info.gauges.memory = memory;
-        put(&mut info, Field::Memory, memory.map(format_bytes_pair));
-        info.gauges.swap = swap;
-        put(&mut info, Field::Swap, swap.map(format_bytes_pair));
-        let disk = hardware::disk();
-        info.gauges.disk = disk;
-        put(&mut info, Field::Disk, disk.map(format_bytes_pair));
-        let vram = hardware::vram();
-        info.gauges.vram = vram;
-        put(&mut info, Field::Vram, vram.map(format_bytes_pair));
-        let battery = power::battery();
-        info.gauges.battery = battery.as_ref().map(|battery| battery.level);
-        put(
-            &mut info,
-            Field::Battery,
-            battery.as_ref().map(power::Battery::text),
-        );
-        let brightness = power::brightness();
-        info.gauges.brightness = brightness;
-        put(&mut info, Field::Brightness, brightness.map(format_percent));
-        put(&mut info, Field::Resolution, desktop::resolution());
-        put(&mut info, Field::LocalIp, network::local_ip());
-        put(
-            &mut info,
-            Field::Processes,
-            procs::count().map(|n| n.to_string()),
-        );
-
-        let packages = packages.join().unwrap_or_default();
-        put(&mut info, Field::Packages, packages.summary);
-        put(
-            &mut info,
-            Field::Flatpak,
-            packages.flatpak.map(|n| n.to_string()),
-        );
-        put(&mut info, Field::Snap, packages.snap.map(|n| n.to_string()));
-        put(&mut info, Field::Gpu, gpu.join().unwrap_or_default());
-        let wifi = wifi.join().unwrap_or_default();
-        put(
-            &mut info,
-            Field::Wifi,
-            wifi.as_ref().map(network::Wifi::text),
-        );
-        put(&mut info, Field::Font, font.join().unwrap_or_default());
-
-        let procs = procs.join().unwrap_or_default();
-        let chain = procs.chain(parent);
-        let comms = procs.comms();
-        put(&mut info, Field::Shell, desktop::shell(&chain));
-        put(&mut info, Field::Terminal, desktop::terminal(&chain));
-        put(&mut info, Field::De, desktop::de(&comms));
-        put(&mut info, Field::Wm, desktop::wm(&comms));
-    });
-
+    platform::collect(&mut info);
     info
 }
 
-/// Re-reads the values that change between frames: uptime, memory, swap, disk, load,
-/// process count, battery, CPU temperature, backlight, and CPU and GPU usage.
-/// Spawns no processes. CPU usage needs two calls on the same sampler, so the first
-/// call leaves it unset.
+/// Re-reads the values that change between frames: uptime, memory, swap, disk, battery
+/// and process count, plus load, CPU temperature, backlight, CPU and GPU usage where the
+/// platform reports them. Spawns no processes. CPU usage needs two calls on the same
+/// sampler, so the first call leaves it unset.
 pub fn refresh_live(info: &mut SysInfo, sampler: &mut CpuSampler) {
-    put(
-        info,
-        Field::Uptime,
-        system::uptime_secs().map(system::format_uptime),
-    );
-    put(info, Field::Load, system::load());
-    put(
-        info,
-        Field::Processes,
-        procs::count().map(|n| n.to_string()),
-    );
-
-    let (memory, swap) = hardware::memory();
-    info.gauges.memory = memory;
-    put(info, Field::Memory, memory.map(format_bytes_pair));
-    info.gauges.swap = swap;
-    put(info, Field::Swap, swap.map(format_bytes_pair));
-    let disk = hardware::disk();
-    info.gauges.disk = disk;
-    put(info, Field::Disk, disk.map(format_bytes_pair));
-
-    let battery = power::battery();
-    info.gauges.battery = battery.as_ref().map(|battery| battery.level);
-    put(
-        info,
-        Field::Battery,
-        battery.as_ref().map(power::Battery::text),
-    );
-
-    let cpu_temp = hardware::cpu_temp();
-    info.gauges.cpu_temp = cpu_temp;
-    put(info, Field::CpuTemp, cpu_temp.map(format_celsius));
-
-    let brightness = power::brightness();
-    info.gauges.brightness = brightness;
-    put(info, Field::Brightness, brightness.map(format_percent));
-
-    let cpu = sampler.sample();
-    info.gauges.cpu = cpu;
-    put(info, Field::CpuUsage, cpu.map(format_percent));
-
-    let gpu = hardware::gpu_busy();
-    info.gauges.gpu = gpu;
-    put(info, Field::GpuUsage, gpu.map(format_percent));
+    platform::refresh(info, sampler);
 }
 
 /// `"6.21 / 30.6 GiB (20%)"`. The unit is picked from the total and printed once.
@@ -369,34 +316,116 @@ fn scaled(bytes: u64, unit: u64) -> String {
     format!("{value:.decimals$}")
 }
 
-fn format_percent(ratio: f64) -> String {
+pub(super) fn format_percent(ratio: f64) -> String {
     format!("{:.0}%", ratio * 100.0)
 }
 
-fn format_celsius(celsius: f64) -> String {
-    format!("{celsius:.0}°C")
+/// `"12m"`, `"3h 4m"` or `"2d 3h 4m"`. Zero days and hours are left out.
+pub(super) fn format_uptime(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    parts.push(format!("{minutes}m"));
+    parts.join(" ")
+}
+
+/// CPU model, thread count and clock, e.g. `"AMD Ryzen 7 7840U (16) @ 5.13 GHz"`.
+/// The thread count and the clock are left out when unknown (zero or `None`).
+pub(super) fn format_cpu(model: &str, threads: usize, ghz: Option<f64>) -> String {
+    let mut text = model.to_string();
+    if threads > 0 {
+        text = format!("{text} ({threads})");
+    }
+    if let Some(ghz) = ghz {
+        text = format!("{text} @ {ghz:.2} GHz");
+    }
+    text
+}
+
+/// Removes trademark marks, the "CPU" word, the nominal clock, and core-count or
+/// "Processor" suffixes: `"Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz"` becomes
+/// `"Intel Core i7-8700"`.
+pub(super) fn clean_cpu_model(model: &str) -> String {
+    let mut name = model
+        .replace("(R)", "")
+        .replace("(TM)", "")
+        .replace("(r)", "")
+        .replace("(tm)", "")
+        .replace(" CPU", "");
+    name = CPU_SPEED_SUFFIX.replace(&name, "").into_owned();
+    if let Some(position) = name.find(" with ") {
+        name.truncate(position);
+    }
+    name = CPU_CORE_SUFFIX.replace(&name, "").into_owned();
+    name = CPU_TYPE_SUFFIX.replace(&name, "").into_owned();
+    name.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A device name from firmware vendor and product strings. Placeholder values are
+/// ignored. A Lenovo product version is the marketing name ("ThinkPad X1 Carbon Gen 11")
+/// and is preferred. Otherwise the vendor and product name are joined unless the product
+/// already starts with the vendor.
+pub(super) fn device_name(
+    vendor: Option<&str>,
+    product: Option<&str>,
+    version: Option<&str>,
+) -> Option<String> {
+    let vendor = vendor.filter(|value| !is_junk(value));
+    let product = product.filter(|value| !is_junk(value));
+    let version = version.filter(|value| !is_junk(value));
+
+    if let Some(version) = version.filter(|_| vendor.is_some_and(is_lenovo)) {
+        return Some(version.to_string());
+    }
+    match (vendor, product) {
+        (Some(vendor), Some(product)) => {
+            if product
+                .to_ascii_lowercase()
+                .starts_with(&vendor.to_ascii_lowercase())
+            {
+                Some(product.to_string())
+            } else {
+                Some(format!("{vendor} {product}"))
+            }
+        }
+        (None, Some(product)) => Some(product.to_string()),
+        _ => None,
+    }
+}
+
+fn is_junk(value: &str) -> bool {
+    let value = value.trim();
+    JUNK_DMI.iter().any(|junk| junk.eq_ignore_ascii_case(value))
+}
+
+fn is_lenovo(vendor: &str) -> bool {
+    vendor.to_ascii_uppercase().contains("LENOVO")
+}
+
+/// `"827 (dpkg)"`, or several managers joined with ", ". Managers with no packages are
+/// left out.
+pub(super) fn join_counts(counts: &[(&str, usize)]) -> Option<String> {
+    let parts: Vec<String> = counts
+        .iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(name, count)| format!("{count} ({name})"))
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 /// Sets the field to the value, or removes it when there is none.
-fn put(info: &mut SysInfo, field: Field, value: Option<impl Into<String>>) {
+pub(super) fn put(info: &mut SysInfo, field: Field, value: Option<impl Into<String>>) {
     match value {
         Some(value) => info.set(field, value),
         None => info.remove(field),
     }
-}
-
-/// Home directory from `$HOME`.
-pub(super) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-}
-
-/// Trimmed contents of a small text file. `None` when it is missing or empty.
-pub(super) fn read_text(path: impl AsRef<Path>) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// Non-empty, trimmed environment variable.
@@ -405,20 +434,6 @@ pub(super) fn env_value(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-/// Entries of a directory whose names pass `keep`, sorted by path. Empty when unreadable.
-pub(super) fn sorted_dir(path: impl AsRef<Path>, keep: impl Fn(&str) -> bool) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(path) else {
-        return Vec::new();
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|entry| keep(&entry.file_name().to_string_lossy()))
-        .map(|entry| entry.path())
-        .collect();
-    paths.sort();
-    paths
 }
 
 #[cfg(test)]
@@ -524,6 +539,132 @@ mod tests {
         assert!(info.gauges.disk.is_some());
         assert!(info.gauges.vram.is_some());
         assert_eq!(info.os_ids, ["arch"]);
+    }
+
+    #[test]
+    fn cpu_sampler_reports_busy_fraction_between_calls() {
+        let mut sampler = CpuSampler::new();
+        assert_eq!(sampler.update(1000, 800), None);
+        assert_eq!(sampler.update(1100, 825), Some(0.75));
+        assert_eq!(sampler.update(1100, 825), None);
+    }
+
+    #[test]
+    fn cpu_model_is_shortened() {
+        let cases = [
+            (
+                "AMD Ryzen 3 2200G with Radeon Vega Graphics",
+                "AMD Ryzen 3 2200G",
+            ),
+            ("AMD Ryzen 5 5600X 6-Core Processor", "AMD Ryzen 5 5600X"),
+            ("AMD Ryzen 7 5800X3D", "AMD Ryzen 7 5800X3D"),
+            ("AMD EPYC 7551P 32-Core Processor", "AMD EPYC 7551P"),
+            (
+                "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+                "Intel Core i7-8700",
+            ),
+            (
+                "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz",
+                "Intel Xeon E5-2680 v4",
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(clean_cpu_model(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn cpu_line_formats_threads_and_clock() {
+        assert_eq!(
+            format_cpu("AMD Ryzen 7 7840U", 16, Some(5.13)),
+            "AMD Ryzen 7 7840U (16) @ 5.13 GHz"
+        );
+        assert_eq!(format_cpu("Cortex-A76", 0, None), "Cortex-A76");
+        assert_eq!(format_cpu("Cortex-A76", 8, None), "Cortex-A76 (8)");
+    }
+
+    #[test]
+    fn uptime_format_omits_zero_leading_units() {
+        assert_eq!(format_uptime(0), "0m");
+        assert_eq!(format_uptime(59), "0m");
+        assert_eq!(format_uptime(12 * 60), "12m");
+        assert_eq!(format_uptime(3 * 3600 + 4 * 60), "3h 4m");
+        assert_eq!(format_uptime(2 * 86_400 + 3 * 3600 + 4 * 60), "2d 3h 4m");
+        assert_eq!(format_uptime(2 * 86_400 + 4 * 60), "2d 4m");
+    }
+
+    #[test]
+    fn device_name_joins_vendor_and_product() {
+        assert_eq!(
+            device_name(Some("Dell Inc."), Some("XPS 13"), None).as_deref(),
+            Some("Dell Inc. XPS 13")
+        );
+        assert_eq!(
+            device_name(Some("ASUSTeK"), Some("ASUSTeK ROG Zephyrus"), None).as_deref(),
+            Some("ASUSTeK ROG Zephyrus")
+        );
+        assert_eq!(
+            device_name(None, Some("Framework Laptop"), None).as_deref(),
+            Some("Framework Laptop")
+        );
+    }
+
+    #[test]
+    fn lenovo_uses_the_product_version() {
+        assert_eq!(
+            device_name(
+                Some("LENOVO"),
+                Some("21HMCTO1WW"),
+                Some("ThinkPad X1 Carbon Gen 11"),
+            )
+            .as_deref(),
+            Some("ThinkPad X1 Carbon Gen 11")
+        );
+    }
+
+    #[test]
+    fn junk_dmi_values_are_ignored() {
+        assert_eq!(
+            device_name(
+                Some("System manufacturer"),
+                Some("System Product Name"),
+                Some("Default string"),
+            ),
+            None
+        );
+        assert_eq!(
+            device_name(Some("Acme"), Some("to be filled by o.e.m."), None),
+            None
+        );
+    }
+
+    #[test]
+    fn battery_text_with_and_without_status() {
+        let charging = Battery {
+            level: 0.87,
+            status: Some("Charging".to_string()),
+        };
+        assert_eq!(charging.text(), "87% (Charging)");
+        let unknown = Battery {
+            level: 0.5,
+            status: None,
+        };
+        assert_eq!(unknown.text(), "50%");
+    }
+
+    #[test]
+    fn joined_counts_skip_empty_managers() {
+        assert_eq!(
+            join_counts(&[("pacman", 1203), ("dpkg", 0), ("nix-user", 45)]).as_deref(),
+            Some("1203 (pacman), 45 (nix-user)")
+        );
+        assert_eq!(join_counts(&[("dpkg", 0)]), None);
+        assert_eq!(join_counts(&[]), None);
+    }
+
+    #[test]
+    fn single_manager_has_no_separator() {
+        assert_eq!(join_counts(&[("dpkg", 827)]).as_deref(), Some("827 (dpkg)"));
     }
 
     #[test]

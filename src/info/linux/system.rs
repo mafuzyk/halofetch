@@ -3,18 +3,8 @@
 use std::ffi::CStr;
 use std::fs;
 
-use super::{env_value, read_text};
-
-/// DMI strings that firmware uses as placeholders instead of a real model.
-const JUNK_DMI: [&str; 7] = [
-    "To Be Filled By O.E.M.",
-    "System Product Name",
-    "Default string",
-    "System manufacturer",
-    "Not Applicable",
-    "None",
-    "",
-];
+use super::read_text;
+use crate::info::{device_name, env_value};
 
 pub(super) fn user() -> Option<String> {
     env_value("USER").or_else(passwd_user)
@@ -120,54 +110,14 @@ pub(super) fn parse_os_release(text: &str) -> (Option<String>, Vec<String>) {
     (display, ids)
 }
 
-/// Hardware model from DMI, or the device tree on ARM boards.
-///
-/// A Lenovo product version is the marketing name ("ThinkPad X1 Carbon Gen 11") and is
-/// preferred. Otherwise the vendor and product name are joined unless the product
-/// already starts with the vendor.
+/// Hardware model from DMI, or the device tree on ARM boards. See [`device_name`] for
+/// how the vendor, product and version strings are combined.
 pub(super) fn device() -> Option<String> {
     let dmi = |file: &str| read_text(format!("/sys/devices/virtual/dmi/id/{file}"));
     let vendor = dmi("sys_vendor");
     let product = dmi("product_name");
     let version = dmi("product_version");
     device_name(vendor.as_deref(), product.as_deref(), version.as_deref()).or_else(devicetree_model)
-}
-
-fn device_name(
-    vendor: Option<&str>,
-    product: Option<&str>,
-    version: Option<&str>,
-) -> Option<String> {
-    let vendor = vendor.filter(|value| !is_junk(value));
-    let product = product.filter(|value| !is_junk(value));
-    let version = version.filter(|value| !is_junk(value));
-
-    if let Some(version) = version.filter(|_| vendor.is_some_and(is_lenovo)) {
-        return Some(version.to_string());
-    }
-    match (vendor, product) {
-        (Some(vendor), Some(product)) => {
-            if product
-                .to_ascii_lowercase()
-                .starts_with(&vendor.to_ascii_lowercase())
-            {
-                Some(product.to_string())
-            } else {
-                Some(format!("{vendor} {product}"))
-            }
-        }
-        (None, Some(product)) => Some(product.to_string()),
-        _ => None,
-    }
-}
-
-fn is_junk(value: &str) -> bool {
-    let value = value.trim();
-    JUNK_DMI.iter().any(|junk| junk.eq_ignore_ascii_case(value))
-}
-
-fn is_lenovo(vendor: &str) -> bool {
-    vendor.to_ascii_uppercase().contains("LENOVO")
 }
 
 fn devicetree_model() -> Option<String> {
@@ -181,22 +131,6 @@ pub(super) fn uptime_secs() -> Option<u64> {
     let text = read_text("/proc/uptime")?;
     let seconds: f64 = text.split_whitespace().next()?.parse().ok()?;
     Some(seconds.max(0.0) as u64)
-}
-
-/// `"12m"`, `"3h 4m"` or `"2d 3h 4m"`. Zero days and hours are left out.
-pub(super) fn format_uptime(seconds: u64) -> String {
-    let days = seconds / 86_400;
-    let hours = (seconds % 86_400) / 3_600;
-    let minutes = (seconds % 3_600) / 60;
-    let mut parts = Vec::new();
-    if days > 0 {
-        parts.push(format!("{days}d"));
-    }
-    if hours > 0 {
-        parts.push(format!("{hours}h"));
-    }
-    parts.push(format!("{minutes}m"));
-    parts.join(" ")
 }
 
 /// One, five and fifteen minute load averages, from `/proc/loadavg`.
@@ -273,61 +207,6 @@ mod tests {
             parse_os_release(text).1,
             ["fedora".to_string(), "rhel".to_string()]
         );
-    }
-
-    #[test]
-    fn device_name_joins_vendor_and_product() {
-        assert_eq!(
-            device_name(Some("Dell Inc."), Some("XPS 13"), None).as_deref(),
-            Some("Dell Inc. XPS 13")
-        );
-        assert_eq!(
-            device_name(Some("ASUSTeK"), Some("ASUSTeK ROG Zephyrus"), None).as_deref(),
-            Some("ASUSTeK ROG Zephyrus")
-        );
-        assert_eq!(
-            device_name(None, Some("Framework Laptop"), None).as_deref(),
-            Some("Framework Laptop")
-        );
-    }
-
-    #[test]
-    fn lenovo_uses_the_product_version() {
-        assert_eq!(
-            device_name(
-                Some("LENOVO"),
-                Some("21HMCTO1WW"),
-                Some("ThinkPad X1 Carbon Gen 11"),
-            )
-            .as_deref(),
-            Some("ThinkPad X1 Carbon Gen 11")
-        );
-    }
-
-    #[test]
-    fn junk_dmi_values_are_ignored() {
-        assert_eq!(
-            device_name(
-                Some("System manufacturer"),
-                Some("System Product Name"),
-                Some("Default string"),
-            ),
-            None
-        );
-        assert_eq!(
-            device_name(Some("Acme"), Some("to be filled by o.e.m."), None),
-            None
-        );
-    }
-
-    #[test]
-    fn uptime_format_omits_zero_leading_units() {
-        assert_eq!(format_uptime(0), "0m");
-        assert_eq!(format_uptime(59), "0m");
-        assert_eq!(format_uptime(12 * 60), "12m");
-        assert_eq!(format_uptime(3 * 3600 + 4 * 60), "3h 4m");
-        assert_eq!(format_uptime(2 * 86_400 + 3 * 3600 + 4 * 60), "2d 3h 4m");
-        assert_eq!(format_uptime(2 * 86_400 + 4 * 60), "2d 4m");
     }
 
     #[test]

@@ -3,20 +3,9 @@
 use std::ffi::CString;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 
-use regex::Regex;
-
-use super::{read_text, sorted_dir, Usage, KIB};
-
-static CPU_SPEED_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\s*@\s*[\d.]+\s*[GM]Hz$").expect("constant pattern is valid")
-});
-static CPU_CORE_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\s+\d+-Core(?:\s+Processor|\s+APU)?$").expect("constant pattern is valid")
-});
-static CPU_TYPE_SUFFIX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s+(?:Processor|APU)$").expect("constant pattern is valid"));
+use super::{read_text, sorted_dir};
+use crate::info::{clean_cpu_model, format_cpu, Usage, KIB};
 
 const PCI_IDS_PATHS: [&str; 3] = [
     "/usr/share/hwdata/pci.ids",
@@ -26,37 +15,8 @@ const PCI_IDS_PATHS: [&str; 3] = [
 
 const HWMON_CPU_CHIPS: [&str; 5] = ["k10temp", "zenpower", "coretemp", "cpu_thermal", "acpitz"];
 
-/// Turns successive `/proc/stat` snapshots into the busy fraction between them.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CpuSampler {
-    /// Previous (total, idle) jiffies.
-    previous: Option<(u64, u64)>,
-}
-
-impl CpuSampler {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Busy fraction since the previous call, 0..=1. `None` on the first call, when
-    /// `/proc/stat` is unreadable, or when no time passed.
-    pub fn sample(&mut self) -> Option<f64> {
-        let (total, idle) = read_cpu_totals()?;
-        self.update(total, idle)
-    }
-
-    fn update(&mut self, total: u64, idle: u64) -> Option<f64> {
-        let (previous_total, previous_idle) = self.previous.replace((total, idle))?;
-        let dtotal = total.saturating_sub(previous_total);
-        let didle = idle.saturating_sub(previous_idle).min(dtotal);
-        if dtotal == 0 {
-            return None;
-        }
-        Some((dtotal - didle) as f64 / dtotal as f64)
-    }
-}
-
-fn read_cpu_totals() -> Option<(u64, u64)> {
+/// Aggregate CPU counters from `/proc/stat` as (total, idle) jiffies.
+pub(in crate::info) fn cpu_totals() -> Option<(u64, u64)> {
     let text = fs::read_to_string("/proc/stat").ok()?;
     parse_cpu_line(text.lines().next()?)
 }
@@ -126,41 +86,11 @@ fn set_first(slot: &mut Option<String>, value: &str) {
     }
 }
 
-/// Removes trademark marks, the "CPU" word, the nominal clock, and core-count or
-/// "Processor" suffixes: `"Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz"` becomes
-/// `"Intel Core i7-8700"`.
-fn clean_cpu_model(model: &str) -> String {
-    let mut name = model
-        .replace("(R)", "")
-        .replace("(TM)", "")
-        .replace("(r)", "")
-        .replace("(tm)", "")
-        .replace(" CPU", "");
-    name = CPU_SPEED_SUFFIX.replace(&name, "").into_owned();
-    if let Some(position) = name.find(" with ") {
-        name.truncate(position);
-    }
-    name = CPU_CORE_SUFFIX.replace(&name, "").into_owned();
-    name = CPU_TYPE_SUFFIX.replace(&name, "").into_owned();
-    name.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn max_frequency_ghz() -> Option<f64> {
     let khz: f64 = read_text("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")?
         .parse()
         .ok()?;
     (khz > 0.0).then(|| khz / 1_000_000.0)
-}
-
-fn format_cpu(model: &str, threads: usize, ghz: Option<f64>) -> String {
-    let mut text = model.to_string();
-    if threads > 0 {
-        text = format!("{text} ({threads})");
-    }
-    if let Some(ghz) = ghz {
-        text = format!("{text} @ {ghz:.2} GHz");
-    }
-    text
 }
 
 /// Hottest plausible CPU sensor in degrees Celsius, from hwmon chips and thermal zones.
@@ -504,48 +434,6 @@ C 03  Display controller
         assert_eq!(parse_cpu_line(line), Some((570, 410)));
         assert_eq!(parse_cpu_line("cpu0 1 2 3 4"), None);
         assert_eq!(parse_cpu_line("intr 1 2 3"), None);
-    }
-
-    #[test]
-    fn cpu_sampler_reports_busy_fraction_between_calls() {
-        let mut sampler = CpuSampler::new();
-        assert_eq!(sampler.update(1000, 800), None);
-        assert_eq!(sampler.update(1100, 825), Some(0.75));
-        assert_eq!(sampler.update(1100, 825), None);
-    }
-
-    #[test]
-    fn cpu_model_is_shortened() {
-        let cases = [
-            (
-                "AMD Ryzen 3 2200G with Radeon Vega Graphics",
-                "AMD Ryzen 3 2200G",
-            ),
-            ("AMD Ryzen 5 5600X 6-Core Processor", "AMD Ryzen 5 5600X"),
-            ("AMD Ryzen 7 5800X3D", "AMD Ryzen 7 5800X3D"),
-            ("AMD EPYC 7551P 32-Core Processor", "AMD EPYC 7551P"),
-            (
-                "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
-                "Intel Core i7-8700",
-            ),
-            (
-                "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz",
-                "Intel Xeon E5-2680 v4",
-            ),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(clean_cpu_model(input), expected, "{input}");
-        }
-    }
-
-    #[test]
-    fn cpu_line_formats_threads_and_clock() {
-        assert_eq!(
-            format_cpu("AMD Ryzen 7 7840U", 16, Some(5.13)),
-            "AMD Ryzen 7 7840U (16) @ 5.13 GHz"
-        );
-        assert_eq!(format_cpu("Cortex-A76", 0, None), "Cortex-A76");
-        assert_eq!(format_cpu("Cortex-A76", 8, None), "Cortex-A76 (8)");
     }
 
     #[test]
