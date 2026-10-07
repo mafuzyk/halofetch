@@ -1,9 +1,9 @@
 [package]
 name = "atlasfetch"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "Centered ASCII art with powerline panels — system information for atlasWM"
+description = "System information fetch with centered logos, powerline panels and a live monitor"
 repository = "https://github.com/mafuzyk/atlasfetch"
 readme = "README.md"
 keywords = ["fetch", "linux", "terminal", "system-information", "tui"]

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod benchmark;
 mod cli;
 mod config;

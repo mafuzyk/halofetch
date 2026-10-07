@@ -104,10 +104,6 @@ impl Line {
         self.spans.push(span);
     }
 
-    pub fn push_str(&mut self, text: &str, style: Style) {
-        self.push(Span::new(text, style));
-    }
-
     /// Append `columns` unstyled spaces.
     pub fn pad(&mut self, columns: usize) {
         if columns > 0 {

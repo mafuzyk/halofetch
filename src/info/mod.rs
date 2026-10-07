@@ -91,6 +91,7 @@ impl SysInfo {
     }
 
     /// Present fields in [`Field::ALL`] order.
+    #[cfg(test)]
     pub fn fields(&self) -> impl Iterator<Item = (Field, &str)> + '_ {
         self.values
             .iter()
@@ -118,6 +119,7 @@ impl SysInfo {
 
     /// Realistic, deterministic data for tests, previews and documentation.
     /// Every field is filled and every gauge is set.
+    #[cfg(test)]
     pub fn sample() -> SysInfo {
         let memory = Usage {
             used: 6 * GIB + GIB / 100 * 21,
@@ -332,28 +334,39 @@ pub fn refresh_live(info: &mut SysInfo, sampler: &mut CpuSampler) {
     put(info, Field::GpuUsage, gpu.map(format_percent));
 }
 
-/// `"6.21 GiB / 30.60 GiB (20%)"`. Binary units with two decimals; the percentage is rounded.
+/// `"6.21 / 30.6 GiB (20%)"`. The unit is picked from the total and printed once.
 pub fn format_bytes_pair(usage: Usage) -> String {
+    const UNITS: [(u64, &str); 5] = [
+        (TIB, "TiB"),
+        (GIB, "GiB"),
+        (MIB, "MiB"),
+        (KIB, "KiB"),
+        (1, "B"),
+    ];
+    let (unit, label) = UNITS
+        .iter()
+        .copied()
+        .find(|(size, _)| usage.total >= *size)
+        .unwrap_or((1, "B"));
     format!(
-        "{} / {} ({:.0}%)",
-        format_size(usage.used),
-        format_size(usage.total),
+        "{} / {} {label} ({:.0}%)",
+        scaled(usage.used, unit),
+        scaled(usage.total, unit),
         usage.ratio() * 100.0
     )
 }
 
-fn format_size(bytes: u64) -> String {
-    if bytes >= TIB {
-        format!("{:.2} TiB", bytes as f64 / TIB as f64)
-    } else if bytes >= GIB {
-        format!("{:.2} GiB", bytes as f64 / GIB as f64)
-    } else if bytes >= MIB {
-        format!("{:.2} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.2} KiB", bytes as f64 / KIB as f64)
+/// Expresses `bytes` in `unit` with 2 decimals below 10, 1 below 100 and none above.
+fn scaled(bytes: u64, unit: u64) -> String {
+    let value = bytes as f64 / unit as f64;
+    let decimals = if value < 10.0 {
+        2
+    } else if value < 100.0 {
+        1
     } else {
-        format!("{bytes} B")
-    }
+        0
+    };
+    format!("{value:.decimals$}")
 }
 
 fn format_percent(ratio: f64) -> String {
@@ -461,22 +474,43 @@ mod tests {
     }
 
     #[test]
-    fn format_bytes_pair_uses_binary_units() {
+    fn format_bytes_pair_picks_unit_from_total() {
         let usage = Usage {
             used: 512 * MIB,
             total: 2 * GIB,
         };
-        assert_eq!(format_bytes_pair(usage), "512.00 MiB / 2.00 GiB (25%)");
+        assert_eq!(format_bytes_pair(usage), "0.50 / 2.00 GiB (25%)");
         let usage = Usage {
             used: 6 * GIB + GIB / 100 * 21,
             total: 30 * GIB + GIB / 10 * 6,
         };
-        assert_eq!(format_bytes_pair(usage), "6.21 GiB / 30.60 GiB (20%)");
+        assert_eq!(format_bytes_pair(usage), "6.21 / 30.6 GiB (20%)");
         let disk = Usage {
             used: 0,
             total: TIB + TIB / 100 * 82,
         };
-        assert_eq!(format_bytes_pair(disk), "0 B / 1.82 TiB (0%)");
+        assert_eq!(format_bytes_pair(disk), "0.00 / 1.82 TiB (0%)");
+        let zero = Usage { used: 0, total: 0 };
+        assert_eq!(format_bytes_pair(zero), "0.00 / 0.00 B (0%)");
+    }
+
+    #[test]
+    fn format_bytes_pair_decimals_follow_magnitude() {
+        let usage = Usage {
+            used: 647 * MIB,
+            total: GIB * 1572 / 100,
+        };
+        assert_eq!(format_bytes_pair(usage), "0.63 / 15.7 GiB (4%)");
+        let usage = Usage {
+            used: GIB * 1033 / 100,
+            total: GIB * 25197 / 100,
+        };
+        assert_eq!(format_bytes_pair(usage), "10.3 / 252 GiB (4%)");
+        let usage = Usage {
+            used: 412 * GIB,
+            total: TIB * 182 / 100,
+        };
+        assert_eq!(format_bytes_pair(usage), "0.40 / 1.82 TiB (22%)");
     }
 
     #[test]

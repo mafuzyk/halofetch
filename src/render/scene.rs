@@ -102,6 +102,55 @@ fn panel_value_width(
     value_limit(natural.min(room.saturating_sub(overhead)), max_value_width)
 }
 
+/// Widest value of a classic panel at natural width, capped by the configured maximum.
+fn natural_value_width(entries: &[Entry], max_value_width: usize) -> usize {
+    let widest = entries.iter().map(blocks::value_width).max().unwrap_or(0);
+    value_limit(widest, max_value_width)
+}
+
+/// Span of a classic panel at natural width: the widest overhead, the widest value and
+/// the cascade. Zero for an empty panel. The gap to the logo is not included.
+fn panel_natural_span(
+    entries: &[Entry],
+    style: InfoStyle,
+    label_w: usize,
+    max_value_width: usize,
+    cascade: usize,
+) -> usize {
+    if entries.is_empty() {
+        return 0;
+    }
+    let overhead = entries
+        .iter()
+        .map(|entry| blocks::entry_overhead(entry, style, label_w))
+        .max()
+        .unwrap_or(0);
+    overhead + natural_value_width(entries, max_value_width) + cascade
+}
+
+/// Splits `avail` columns between two panels with natural spans `left` and `right`. When
+/// both fit, each keeps its span. Otherwise each gets up to half, and a panel that needs
+/// less than half passes the rest to the other one.
+fn allocate_spans(left: usize, right: usize, avail: usize) -> (usize, usize) {
+    if left + right <= avail {
+        return (left, right);
+    }
+    let half = avail / 2;
+    if left < half {
+        (left, avail - left)
+    } else if right < half {
+        (avail - right, right)
+    } else {
+        (half, avail - half)
+    }
+}
+
+/// True when a non-empty panel is cut below the narrowest readable value width.
+fn squeezed(entries: &[Entry], value_w: usize, max_value_width: usize) -> bool {
+    !entries.is_empty()
+        && value_w < CLASSIC_MIN_VALUE_W.min(natural_value_width(entries, max_value_width))
+}
+
 /// Plain (non-mirrored) rows, each value cut to the room left after its own overhead.
 fn fitted_rows(
     ctx: &RenderCtx,
@@ -174,6 +223,7 @@ fn classic(ctx: &RenderCtx) -> Vec<Line> {
     let gap = layout.gap;
     let cascade = layout.cascade;
     let style = layout.style;
+    let cap = layout.max_value_width;
 
     let left = blocks::entries(ctx, Side::Left);
     let right = blocks::entries(ctx, Side::Right);
@@ -181,32 +231,43 @@ fn classic(ctx: &RenderCtx) -> Vec<Line> {
         Some(logo) if !(left.is_empty() && right.is_empty()) => logo,
         _ => return stacked(ctx),
     };
-
-    let logo_x = width.saturating_sub(logo.width) / 2;
-    let logo_end = logo_x + logo.width;
     let left_label_w = label_width(&left);
     let right_label_w = label_width(&right);
-    let left_room = logo_x.saturating_sub(gap + margin + cascade);
-    let right_room = width.saturating_sub(logo_end + gap + margin + cascade);
+
+    // The composition is always centered. Panels keep their natural span when everything
+    // fits; otherwise they share the room beside the logo and their values are cut.
+    let left_nat = panel_natural_span(&left, style, left_label_w, cap, cascade);
+    let right_nat = panel_natural_span(&right, style, right_label_w, cap, cascade);
+    let gaps = gap * (usize::from(!left.is_empty()) + usize::from(!right.is_empty()));
+    let avail = width.saturating_sub(2 * margin + logo.width + gaps);
+    let (left_span, right_span) = allocate_spans(left_nat, right_nat, avail);
+    let left_block = if left.is_empty() { 0 } else { gap + left_span };
+    let right_block = if right.is_empty() {
+        0
+    } else {
+        gap + right_span
+    };
+    let total = left_block + logo.width + right_block;
+    let start = width.saturating_sub(total) / 2;
+    let logo_x = start + left_block;
     let left_value_w = panel_value_width(
         &left,
         style,
         left_label_w,
-        left_room,
-        layout.max_value_width,
+        left_span.saturating_sub(cascade),
+        cap,
     );
     let right_value_w = panel_value_width(
         &right,
         style,
         right_label_w,
-        right_room,
-        layout.max_value_width,
+        right_span.saturating_sub(cascade),
+        cap,
     );
-    let too_narrow = (!left.is_empty() && left_value_w < CLASSIC_MIN_VALUE_W)
-        || (!right.is_empty() && right_value_w < CLASSIC_MIN_VALUE_W);
-    if too_narrow {
+    if squeezed(&left, left_value_w, cap) || squeezed(&right, right_value_w, cap) {
         return stacked(ctx);
     }
+    let logo_end = logo_x + logo.width;
 
     let left_rows: Vec<Line> = left
         .iter()
@@ -233,9 +294,14 @@ fn classic(ctx: &RenderCtx) -> Vec<Line> {
     let left_top = (total - left_rows.len()) / 2;
     let right_top = (total - right_rows.len()) / 2;
 
-    let mut out: Vec<Line> = blocks::title_lines(ctx)
+    let title = blocks::title_lines(ctx);
+    let title_w = title.iter().map(Line::width).max().unwrap_or(0);
+    let title_x = (logo_x + logo.width / 2)
+        .saturating_sub(title_w / 2)
+        .min(width.saturating_sub(title_w));
+    let mut out: Vec<Line> = title
         .into_iter()
-        .map(|line| centered(line, width))
+        .map(|line| indent(title_x, line))
         .collect();
     if !out.is_empty() {
         out.push(Line::new());
@@ -535,6 +601,7 @@ fn frame_top(title: &str, total_w: usize, colors: &Colors) -> Line {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::Field;
     use crate::logo::LogoSource;
     use crate::render::to_plain;
 
@@ -615,6 +682,79 @@ mod tests {
             has_any(&line[..glyph], &LEFT_LABELS) && has_any(&line[glyph..], &RIGHT_LABELS)
         });
         assert!(joined, "{text}");
+    }
+
+    #[test]
+    fn classic_centers_the_composition_without_cutting_values() {
+        let mut info = SysInfo::sample();
+        info.set(Field::Os, "Ubuntu 24.04.5 LTS");
+        let mut cfg = Config::default();
+        cfg.fields
+            .right
+            .retain(|entry| entry.field == Field::Uptime);
+        let bar = "#".repeat(50);
+        let logos = LogoSet {
+            full: Logo::from_text(&format!("{bar}\n{bar}\n{bar}")),
+            small: Logo::from_text("##\n##"),
+        };
+        let text = render_plain(Scene::Classic, &cfg, &info, &logos, 120);
+        assert!(text.contains("Ubuntu 24.04.5 LTS"), "{text}");
+    }
+
+    #[test]
+    fn classic_stays_joined_and_centered_when_panels_shrink() {
+        let info = SysInfo::sample();
+        let cfg = Config::default();
+        let bar = "#".repeat(50);
+        let logos = LogoSet {
+            full: Logo::from_text(&format!("{bar}\n{bar}\n{bar}")),
+            small: Logo::from_text("##\n##"),
+        };
+        let width = 120;
+        let text = render_plain(Scene::Classic, &cfg, &info, &logos, width);
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("OS") && line.contains("Uptime")),
+            "{text}"
+        );
+        let left_margin = lines
+            .iter()
+            .map(|line| text_width(line) - text_width(line.trim_start()))
+            .min()
+            .unwrap_or(0);
+        let right_margin = width
+            - lines
+                .iter()
+                .map(|line| text_width(line.trim_end()))
+                .max()
+                .unwrap_or(0);
+        assert!(
+            left_margin.abs_diff(right_margin) <= 1,
+            "margins {left_margin} and {right_margin}\n{text}"
+        );
+    }
+
+    #[test]
+    fn allocate_spans_keeps_natural_spans_when_they_fit() {
+        assert_eq!(allocate_spans(20, 30, 60), (20, 30));
+        assert_eq!(allocate_spans(30, 30, 60), (30, 30));
+    }
+
+    #[test]
+    fn allocate_spans_passes_the_rest_to_the_larger_panel() {
+        assert_eq!(allocate_spans(10, 80, 60), (10, 50));
+        assert_eq!(allocate_spans(80, 10, 60), (50, 10));
+    }
+
+    #[test]
+    fn allocate_spans_splits_evenly_when_both_need_more_than_half() {
+        assert_eq!(allocate_spans(45, 42, 60), (30, 30));
+        assert_eq!(allocate_spans(40, 41, 61), (30, 31));
     }
 
     #[test]

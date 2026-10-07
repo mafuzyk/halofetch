@@ -122,9 +122,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .areas(area);
     draw_header(frame, header, app);
     if body.width >= WIDE_WIDTH {
+        let content_w = (u32::from(body.width) * 34 / 100).clamp(44, 60) as u16;
         let [menu, content, preview] = Layout::horizontal([
             Constraint::Length(MENU_WIDTH),
-            Constraint::Percentage(42),
+            Constraint::Length(content_w),
             Constraint::Min(0),
         ])
         .areas(body);

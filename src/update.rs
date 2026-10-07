@@ -6,7 +6,7 @@ use std::process::Command;
 
 pub fn run() -> Result<()> {
     let source = detect_source_dir()?;
-    println!("📦 atlasfetch update — source: {}", source.display());
+    println!("atlasfetch update — source: {}", source.display());
     ensure_clean_checkout(&source)?;
 
     run_command(
@@ -30,7 +30,7 @@ pub fn run() -> Result<()> {
 
     println!("→ Installing to {}...", destination.display());
     install_binary(&binary, &destination)?;
-    println!("✅ Updated to latest version!");
+    println!("Updated to latest version!");
     Ok(())
 }
 
