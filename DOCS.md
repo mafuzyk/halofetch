@@ -4,7 +4,7 @@ Este documento descreve a versão 3 por dentro: módulos, fluxo de execução, c
 
 ## Escopo
 
-O AtlasFetch mostra informações do sistema para terminais Linux. Ele tem três saídas que usam o mesmo modelo de dados:
+O AtlasFetch mostra informações do sistema para terminais Linux e Windows (veja a seção [Windows](#windows)). Ele tem três saídas que usam o mesmo modelo de dados:
 
 - a renderização estática, impressa uma vez no terminal ou em um pipe;
 - a saída JSON versionada, sem layout;
@@ -26,14 +26,9 @@ Objetivos da versão 3:
 | `src/cli.rs` | Comandos e opções com `clap`; formas antigas ocultas |
 | `src/config.rs` | Esquema versão 3, valores padrão, validação, normalização, migração de v1/v2, quarentena de arquivos inválidos e gravação atômica |
 | `src/field.rs` | Catálogo dos 32 campos: chaves, rótulos, ícones, grupos, descrições, gauges e campos ao vivo |
-| `src/info/mod.rs` | `SysInfo`, `Gauges`, `collect` (detecção única), `refresh_live` (leituras do monitor) e formatação dos valores |
-| `src/info/system.rs` | Usuário, host, kernel, arquitetura, sistema operacional (os-release), modelo do equipamento, uptime, carga e locale |
-| `src/info/hardware.rs` | CPU, temperatura, memória, swap, disco, VRAM, uso e nome da GPU |
-| `src/info/desktop.rs` | Shell, terminal, ambiente de desktop, gerenciador de janelas, resolução e fonte do terminal |
-| `src/info/network.rs` | IPv4 principal e estado do Wi-Fi |
-| `src/info/packages.rs` | Contagem de pacotes dos gerenciadores nativos, Flatpak e Snap |
-| `src/info/power.rs` | Bateria e brilho da tela |
-| `src/info/procs.rs` | Uma única varredura de `/proc`, usada por shell, terminal, DE, WM e contagem de processos |
+| `src/info/mod.rs` | `SysInfo`, `Gauges`, `collect` (detecção única), `refresh_live` (leituras do monitor) e formatação dos valores; escolhe o backend de cada plataforma |
+| `src/info/linux/` | Backend Linux: `system.rs`, `hardware.rs`, `desktop.rs`, `network.rs`, `packages.rs`, `power.rs` e `procs.rs` (uma única varredura de `/proc`, usada por shell, terminal, DE, WM e contagem de processos) |
+| `src/info/windows/` | Backend Windows: chamadas Win32, registro do Windows e um wrapper seguro do registro em `registry.rs`. Veja a seção [Windows](#windows) |
 | `src/render/mod.rs` | Canvas de texto estilizado (`Line`, `Span`, `Style`), largura de texto e conversões para ANSI, texto puro e ratatui |
 | `src/render/scene.rs` | As cenas `classic`, `side` e `dashboard` e seus fallbacks |
 | `src/render/blocks.rs` | Linhas de informação, barras, gauges, título e faixa de cores da paleta |
@@ -43,6 +38,7 @@ Objetivos da versão 3:
 | `src/tui/app.rs` | Estado do editor, tratamento de eventos e regras de edição (sem desenho) |
 | `src/tui/view.rs` | Desenho do editor com ratatui a partir do estado |
 | `src/tui/input.rs` | Campo de texto de uma linha usado pelos popups e pelas linhas de texto |
+| `src/tui/clipboard.rs` | Texto da área de transferência do Windows, para a linha "Paste logo from clipboard" do editor (somente Windows) |
 | `src/live.rs` | Workspace ao vivo: PTY, shell, parser VT100 e atualização das métricas |
 | `src/output.rs` | Saída JSON, esquema versão 2 |
 | `src/benchmark.rs` | Medição da coleta e da renderização completa |
@@ -136,6 +132,8 @@ Quando a saída não é um terminal, a largura vem de `COLUMNS` e, sem ela, vale
 
 ### Fontes por módulo
 
+A tabela a seguir descreve o backend Linux (`src/info/linux/`). O backend Windows está na seção [Windows](#windows).
+
 | Módulo | Campos | Fonte |
 |---|---|---|
 | `system.rs` | `user` | `$USER`; sem ele, o banco de usuários (`getpwuid`) |
@@ -223,7 +221,7 @@ Os nomes legados aceitos em arquivos da versão 3 editados à mão são resolvid
 
 ### Local e caminhos
 
-Local padrão: `$XDG_CONFIG_HOME/atlasfetch/config.json`, ou `~/.config/atlasfetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório.
+Local padrão: `$XDG_CONFIG_HOME/atlasfetch/config.json`, ou `~/.config/atlasfetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. No Windows, o padrão é `%APPDATA%\atlasfetch\config.json`. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório.
 
 ### Esquema da versão 3
 
@@ -540,6 +538,48 @@ O workspace precisa de terminal interativo; sem ele, `monitor` falha com uma men
 
 A saída tem o número de execuções, a cena e a largura, e para cada medida o mínimo, a mediana, a média e o máximo em milissegundos.
 
+## Windows
+
+O backend Windows fica em `src/info/windows/`. `info/mod.rs` seleciona um módulo de plataforma com `cfg`, e os dois backends expõem os mesmos pontos de entrada `collect` e `refresh`. O código independente de plataforma (`SysInfo`, formatação, regras de nome do equipamento, limpeza do nome da CPU) continua em `info/mod.rs` e atende aos dois.
+
+As regras de detecção são as mesmas do Linux: cada detector devolve `None` em caso de falha, nenhuma detecção cria processos, consulta WMI ou dorme. `registry.rs` envolve `RegGetValueW`, `RegEnumKeyExW` e `RegOpenKeyExW` em `read_string`, `read_u32` e `subkeys`; cada bloco `unsafe` tem um comentário SAFETY.
+
+| Campo | Fonte |
+|---|---|
+| `os`, `kernel`, `os_ids` | `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion`: `ProductName`, `DisplayVersion` (ou `ReleaseId`), `CurrentBuildNumber`, `UBR`, `CurrentMajorVersionNumber` e `CurrentMinorVersionNumber`. A partir do build 22000, o nome "Windows 10" passa a ser lido como "Windows 11". `os_ids` é `windows_11` ou `windows`, ambas chaves de logo incorporadas |
+| `arch` | `GetNativeSystemInfo`, então um build de 32 bits em Windows de 64 bits mostra a arquitetura real da máquina |
+| `uptime` | `GetTickCount64` |
+| `user`, `host` | `%USERNAME%`, senão `GetUserNameW`; `GetComputerNameExW(ComputerNameDnsHostname)` |
+| `device` | `HKLM\HARDWARE\DESCRIPTION\System\BIOS`: `SystemManufacturer`, `SystemProductName` e, para Lenovo, `SystemVersion`, com o mesmo filtro de valores de preenchimento e as mesmas regras de fabricante do Linux |
+| `locale` | `GetUserDefaultLocaleName` |
+| `cpu` | `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0`: `ProcessorNameString` e `~MHz`; threads por `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)` |
+| `cpu_usage` | Diferenças de `GetSystemTimes` pelo `CpuSampler`; somente no monitor |
+| `gpu` | Classe de adaptadores de vídeo `{4d36e968-e325-11ce-bfc1-08002be10318}`, subchaves chamadas `NNNN`, valor `DriverDesc`. Adaptadores básicos e remotos da Microsoft são ignorados. `vram` nunca é preenchido, porque o Windows não informa o uso de VRAM sem DXGI |
+| `memory`, `swap` | `GlobalMemoryStatusEx`. Swap é o arquivo de paginação além da memória física, e fica ausente quando o arquivo de paginação está vazio |
+| `disk` | `GetDiskFreeSpaceExW` em `%SystemDrive%\`, ou `C:` quando a variável não está definida |
+| `battery` | `GetSystemPowerStatus`. Ausente sem bateria (flag 128) ou com nível desconhecido (255). O status é `Charging`, `Full` ou `Discharging` |
+| `resolution` | `EnumDisplayDevicesW` para os adaptadores ligados ao desktop, depois `EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS)`, formatado como `2560x1440 @ 144Hz` |
+| `wm` | Constante `Desktop Window Manager` |
+| `local_ip` | `GetAdaptersAddresses` para IPv4, sem entradas anycast, multicast ou DNS. Somente adaptadores ativos, nunca loopback ou túnel. Ethernet (IfType 6) e Wi-Fi (71) têm prioridade; endereços link-local `169.254.0.0/16` são ignorados |
+| `packages` | Scoop: `%SCOOP%\apps`, senão `%USERPROFILE%\scoop\apps`, sem `scoop`. Chocolatey: `%ChocolateyInstall%\lib`, senão `C:\ProgramData\chocolatey\lib`. Winget e a Microsoft Store não são contados |
+| `processes`, `shell`, `terminal` | Uma passagem de `CreateToolhelp32Snapshot` sobre os processos, depois a cadeia de processos pais. Shells: `pwsh`, `powershell`, `cmd`, `nu`, `bash`, `zsh`, `fish`, `elvish`, `xonsh`. Terminais: dicas de ambiente como `WT_SESSION` e `ConEmuPID`, depois ancestrais como `WindowsTerminal`, `WezTerm`, `Alacritty`, `mintty`, `ConEmu` e `Code`, com `conhost` ou `OpenConsole` como último recurso |
+
+Não preenchidos no Windows: `de`, `font`, `flatpak`, `snap`, `cpu_temp`, `gpu_usage`, `vram`, `load`, `wifi` e `brightness`.
+
+A contagem de `packages` lista somente os gerenciadores com pelo menos um pacote, por exemplo `34 (scoop), 12 (choco)`.
+
+### Shell do monitor
+
+`live.rs` escolhe o shell com `windows_shell`: `$SHELL` quando ele aponta para um arquivo existente; senão `pwsh.exe`, `powershell.exe`, `%COMSPEC%` e `cmd.exe`. `windows_shell_args` passa `-i` ao bash, ao zsh e ao fish, e o fish também recebe o contorno da saudação. PowerShell e cmd iniciam sem argumentos. `TERM` não é definido. Uma falha ao ativar a colagem com delimitadores é ignorada, porque consoles legados podem recusá-la.
+
+### Entrada e colagem
+
+O editor trata `KeyEventKind::Release` como não sendo um pressionamento de tecla, porque o Windows reporta as liberações como eventos. Consoles legados não entregam uma colagem como `Event::Paste`, então a seção Logo tem uma linha exclusiva do Windows, `Setting::PasteLogo`, que lê `CF_UNICODETEXT` por meio de `tui/clipboard.rs`. O texto segue o mesmo caminho do logo pendente que um logo colado.
+
+### Testes
+
+As funções auxiliares puras em `info/windows/` têm testes unitários que rodam no job de CI do Windows. Chamadas Win32 apenas verificam que não entram em pânico. As funções auxiliares em `live.rs` (`windows_shell`, `windows_shell_args`) e `update.rs` (`on_path`) são compiladas e testadas em todas as plataformas.
+
 ## Atualizador
 
 `update::run`:
@@ -549,6 +589,8 @@ A saída tem o número de execuções, a cena e a largura, e para cada medida o 
 3. executa `git pull --rebase --autostash`, `cargo build --release --locked` e `install -m 755` para `~/.local/bin/atlasfetch`.
 
 Se qualquer passo falha, o comando para com o motivo. Releases empacotadas não usam esse caminho.
+
+No Windows, o passo 3 gera `target\release\atlasfetch.exe` e o instala em `%LOCALAPPDATA%\Programs\atlasfetch\atlasfetch.exe`. O executável em uso é renomeado para `atlasfetch.exe.old` antes da cópia, e o `.old` anterior é removido na atualização seguinte (melhor esforço). Se a pasta de instalação não estiver no `PATH`, a atualização imprime a instrução para adicioná-la.
 
 ## Qualidade e CI
 
@@ -561,7 +603,7 @@ cargo test --all-targets --all-features --locked
 cargo build --release --locked
 ```
 
-`.github/workflows/ci.yml` executa essas quatro etapas em pushes para `main` e em pull requests, com o toolchain estável, `rustfmt` e `clippy`. `release.yml` roda quando uma tag `v*` é enviada: executa os testes na variante GNU, compila as variantes GNU e musl (esta com `musl-tools`), empacota cada binário em `.tar.gz` e grava um arquivo `.sha256` ao lado.
+`.github/workflows/ci.yml` executa essas etapas em pushes para `main` e em pull requests, com o toolchain estável, `rustfmt` e `clippy`, em `ubuntu-latest` e `windows-latest`. A verificação de formatação roda só no Ubuntu; clippy, testes e build de release rodam nos dois. `release.yml` roda quando uma tag `v*` é enviada: executa os testes na variante GNU, compila as variantes GNU, musl (esta com `musl-tools`) e `x86_64-pc-windows-msvc` (em `windows-latest`). Os binários Linux são empacotados em `.tar.gz`, e o da Windows em `.zip` com `atlasfetch.exe`, `LICENSE` e `README.md`; cada pacote recebe um arquivo `.sha256` ao lado.
 
 Os testes cobrem, entre outros: o catálogo de campos (chaves, aliases, grupos e textos); defaults e validação da configuração; normalização; migração de v1 e v2 com backup; quarentena; gravação atômica e backups numerados; cada cena em várias larguras; a navegação, a edição e os atalhos do editor; a saída JSON; a formatação dos valores; a seleção de logos e a limpeza de ASCII; a detecção do checkout do atualizador.
 
