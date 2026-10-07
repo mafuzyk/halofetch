@@ -1,6 +1,9 @@
 //! Source-based self-update support.
 
-use color_eyre::{eyre::bail, Result};
+use color_eyre::{
+    eyre::{bail, eyre},
+    Result,
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -85,17 +88,19 @@ fn detect_source_dir() -> Result<PathBuf> {
         }
     }
 
-    bail!("could not find the AtlasFetch source checkout; set ATLASFETCH_SRC to its path")
+    Err(eyre!(
+        "could not find the AtlasFetch source checkout; set ATLASFETCH_SRC to its path"
+    ))
 }
 
 fn validate_source(path: PathBuf) -> Result<PathBuf> {
     if is_source_dir(&path) {
         Ok(path)
     } else {
-        bail!(
+        Err(eyre!(
             "ATLASFETCH_SRC is not an AtlasFetch source checkout: {}",
             path.display()
-        )
+        ))
     }
 }
 

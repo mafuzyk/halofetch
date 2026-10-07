@@ -17,7 +17,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use color_eyre::eyre::{bail, eyre};
+use color_eyre::eyre::eyre;
 use color_eyre::Result;
 
 use cli::{Args, Command, ConfigAction, LogosAction, OutputFormat, PresetAction};
@@ -122,7 +122,9 @@ fn require_terminal(what: &str) -> Result<()> {
     if is_interactive() {
         Ok(())
     } else {
-        bail!("{what} needs an interactive terminal (stdin and stdout must be a TTY)")
+        Err(eyre!(
+            "{what} needs an interactive terminal (stdin and stdout must be a TTY)"
+        ))
     }
 }
 
