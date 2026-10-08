@@ -332,8 +332,14 @@ fn classic(ctx: &RenderCtx) -> Vec<Line> {
     }
 
     if let Some(rule) = color_row(ctx) {
+        let rule_x = (logo_x + logo.width / 2)
+            .saturating_sub(rule.width() / 2)
+            .min(width.saturating_sub(rule.width()));
+        let mut row = Line::new();
+        row.pad_to(rule_x);
+        row.append(rule);
         out.push(Line::new());
-        out.push(centered(rule, width));
+        out.push(row);
     }
     out
 }
@@ -739,6 +745,42 @@ mod tests {
         assert!(
             left_margin.abs_diff(right_margin) <= 1,
             "margins {left_margin} and {right_margin}\n{text}"
+        );
+    }
+
+    #[test]
+    fn classic_keeps_the_color_row_under_the_logo() {
+        let mut info = SysInfo::sample();
+        info.set(Field::Cpu, "x".repeat(60));
+        let mut cfg = Config::default();
+        cfg.layout.cascade = 2;
+        cfg.fields.left.retain(|entry| entry.field == Field::Os);
+        cfg.fields.right.retain(|entry| entry.field == Field::Cpu);
+        let width = 120;
+        let text = render_plain(Scene::Classic, &cfg, &info, &test_logos(), width);
+        let logo_start = text
+            .lines()
+            .filter_map(|line| line.find('#').map(|byte| text_width(&line[..byte])))
+            .min()
+            .unwrap_or(0);
+        let logo_end = text
+            .lines()
+            .filter_map(|line| line.rfind('#').map(|byte| text_width(&line[..byte]) + 1))
+            .max()
+            .unwrap_or(0);
+        let logo_centre = (logo_start + logo_end) / 2;
+        assert!(logo_centre + 10 < width / 2, "logo not shifted: {text}");
+        let rule = text
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default();
+        let rule_start = text_width(&rule[..rule.len() - rule.trim_start().len()]);
+        let rule_end = rule_start + text_width(rule.trim());
+        let rule_centre = (rule_start + rule_end) / 2;
+        assert!(
+            logo_centre.abs_diff(rule_centre) <= 1,
+            "logo centre {logo_centre}, color row centre {rule_centre}\n{text}"
         );
     }
 
