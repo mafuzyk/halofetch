@@ -50,8 +50,3 @@ jobs:
         run: |
           ./result/bin/halofetch --version
           ./result/bin/halofetch --format json
-      - name: Upload the lock file
-        uses: actions/upload-artifact@v4
-        with:
-          name: flake-lock
-          path: flake.lock
