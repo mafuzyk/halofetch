@@ -466,8 +466,12 @@ fn render_shell(frame: &mut Frame, area: Rect, screen: &vt100::Screen) {
             if source.inverse() {
                 style = style.add_modifier(Modifier::REVERSED);
             }
+            // An empty symbol prints nothing, so every cell after it on the row would be
+            // drawn one column to the left.
+            let contents = source.contents();
+            let symbol = if contents.is_empty() { " " } else { &contents };
             if let Some(target) = frame.buffer_mut().cell_mut((inner.x + col, inner.y + row)) {
-                target.set_symbol(&source.contents()).set_style(style);
+                target.set_symbol(symbol).set_style(style);
             }
         }
     }
