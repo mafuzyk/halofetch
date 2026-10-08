@@ -92,7 +92,14 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Configuration file [default: ~/.config/halofetch/config.json]
+    #[cfg_attr(
+        not(windows),
+        doc = "Configuration file [default: ~/.config/halofetch/config.json]"
+    )]
+    #[cfg_attr(
+        windows,
+        doc = r"Configuration file [default: %APPDATA%\halofetch\config.json]"
+    )]
     #[arg(short = 'c', long = "config", global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
