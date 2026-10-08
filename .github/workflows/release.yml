@@ -49,17 +49,17 @@ jobs:
       - name: Package binary
         if: matrix.archive == 'tar.gz'
         run: |
-          archive="atlasfetch-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
-          tar -czf "$archive" -C "target/${{ matrix.target }}/release" atlasfetch
+          archive="halofetch-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          tar -czf "$archive" -C "target/${{ matrix.target }}/release" halofetch
           sha256sum "$archive" > "$archive.sha256"
 
       - name: Package binary (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $archive = "atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $archive = "halofetch-${{ github.ref_name }}-${{ matrix.target }}.zip"
           $files = @(
-            "target/${{ matrix.target }}/release/atlasfetch.exe",
+            "target/${{ matrix.target }}/release/halofetch.exe",
             "LICENSE",
             "README.md"
           )
@@ -72,6 +72,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
-            atlasfetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}.sha256
+            halofetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+            halofetch-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}.sha256
           generate_release_notes: true

@@ -33,7 +33,7 @@ const RESOURCE_COLUMN_GAP: usize = 3;
 const SYSTEM_COLUMN_GAP: usize = 4;
 /// Columns a box spends on its borders and the one space inside each border.
 const FRAME_CHROME: usize = 4;
-const DEFAULT_BOX_TITLE: &str = "AtlasFetch";
+const DEFAULT_BOX_TITLE: &str = "HaloFetch";
 const SYSTEM_TITLE: &str = "System";
 const RESOURCES_TITLE: &str = "Resources";
 

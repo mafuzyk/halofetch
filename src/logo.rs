@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn resolve_missing_file_is_empty() {
         let source = LogoSource::File {
-            path: "/nonexistent/atlasfetch-logo".to_string(),
+            path: "/nonexistent/halofetch-logo".to_string(),
         };
         assert_eq!(resolve(&source, &[], None, true), LogoSet::default());
     }

@@ -4,7 +4,7 @@ State of the v3 rewrite and the Windows port, written so work can continue from 
 
 ## Where things are
 
-- Branch: `ccr-c9f6f9fa-40obji`, open as draft PR #2 against `main` (mafuzyk/atlasfetch).
+- Branch: `ccr-c9f6f9fa-40obji`, open as draft PR #2 against `main` (mafuzyk/halofetch).
 - Version: 3.0.0 (`Cargo.toml`, `flake.nix`).
 - CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests and a release build on `ubuntu-latest` and `windows-latest`. Both were green on `4e148d0`.
 - `release.yml` builds Linux binaries and `x86_64-pc-windows-msvc` as a `.zip` with a `.sha256`.
@@ -29,7 +29,7 @@ State of the v3 rewrite and the Windows port, written so work can continue from 
 | `src/render/mod.rs` | Canvas: `Style`, `Span`, `Line`, ANSI / plain / ratatui output. |
 | `src/render/blocks.rs` | Info rows (powerline and plain, mirrored for the left panel), bars, gauges, color blocks, title. |
 | `src/render/scene.rs` | Scene composition. Classic centers the logo and fits both panels with a water-filling width split, falling back to a stacked layout. |
-| `src/config.rs` | Config v3, validation, normalization, migration, paths (`~/.config/atlasfetch`, `%APPDATA%\atlasfetch`). |
+| `src/config.rs` | Config v3, validation, normalization, migration, paths (`~/.config/halofetch`, `%APPDATA%\halofetch`). |
 | `src/logo.rs` | Embedded logos (built by `build.rs` from `logos/`), detection, file logos, coloring. |
 | `src/theme.rs` | Palettes, gradients, contrast. |
 | `src/tui/` | Config editor: `app.rs` state and events, `view.rs` drawing, `input.rs` text input, `clipboard.rs` (Windows only). |
@@ -73,11 +73,11 @@ Fixed after that test (commits `9f6a698`, `9b56bbb`, not yet confirmed on the ma
 
 Still open:
 
-3. **Shell field missing.** `Terminal` showed `Windows Terminal` (from `WT_SESSION`), but `Shell` was absent, so the process-tree walk in `src/info/windows/process.rs` (`ProcTable::chain` from the parent of the current pid) returned no known shell. Get `atlasfetch --format json` and the parent chain from the machine (`Get-CimInstance Win32_Process` for the atlasfetch pid and its parents) before changing code. Possible fallback: when the chain has no known shell, use `PSModulePath`/`PROMPT` style environment hints (`pwsh` vs Windows PowerShell vs cmd).
+3. **Shell field missing.** `Terminal` showed `Windows Terminal` (from `WT_SESSION`), but `Shell` was absent, so the process-tree walk in `src/info/windows/process.rs` (`ProcTable::chain` from the parent of the current pid) returned no known shell. Get `halofetch --format json` and the parent chain from the machine (`Get-CimInstance Win32_Process` for the halofetch pid and its parents) before changing code. Possible fallback: when the chain has no known shell, use `PSModulePath`/`PROMPT` style environment hints (`pwsh` vs Windows PowerShell vs cmd).
 4. **Icons render as replacement glyphs** without a Nerd Font (the default Windows Terminal font has none of them). Consider a config option to turn icons off or to use plain Unicode symbols, and detect nothing automatically.
 5. **Long values truncated** in the classic scene at about 120 columns (`Desktop Window Manag…`, CPU and GPU names). Ideas: shorten the WM value to `DWM` on Windows (`DESKTOP_WINDOW_MANAGER` in `src/info/windows/mod.rs`), shorten GPU names (strip vendor suffixes), or let the composition move a long row to the side with more room.
 6. **Cascade looks like misalignment.** The classic scene steps rows inward (`layout.cascade`, default 2, in `src/render/scene.rs`), so pills are not in a straight column. On Windows it read as a bug. Consider default 0 or a clearer shape.
-7. **Dashboard is static.** `atlasfetch --scene dashboard` prints once and exits by design. Live updates are `atlasfetch monitor` (it accepts `--scene dashboard`). The user expected the dashboard to update; at least make this clear in the README, possibly add a hint line or a `--watch` flag on `fetch` that redraws in place without the shell.
+7. **Dashboard is static.** `halofetch --scene dashboard` prints once and exits by design. Live updates are `halofetch monitor` (it accepts `--scene dashboard`). The user expected the dashboard to update; at least make this clear in the README, possibly add a hint line or a `--watch` flag on `fetch` that redraws in place without the shell.
 8. VRAM is not reported on Windows (registry `HardwareInformation.qwMemorySize` under the display class key is a candidate).
 
 ## Conventions

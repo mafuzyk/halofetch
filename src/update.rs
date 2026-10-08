@@ -10,14 +10,14 @@ use std::process::Command;
 
 /// File name of the release binary cargo writes, and of the installed command.
 const EXECUTABLE: &str = if cfg!(windows) {
-    "atlasfetch.exe"
+    "halofetch.exe"
 } else {
-    "atlasfetch"
+    "halofetch"
 };
 
 pub fn run() -> Result<()> {
     let source = detect_source_dir()?;
-    println!("atlasfetch update — source: {}", source.display());
+    println!("halofetch update — source: {}", source.display());
     ensure_clean_checkout(&source)?;
 
     run_command(
@@ -51,18 +51,18 @@ fn ensure_clean_checkout(source: &Path) -> Result<()> {
         .current_dir(source)
         .output()?;
     if !output.status.success() {
-        bail!("could not inspect the AtlasFetch checkout before updating");
+        bail!("could not inspect the HaloFetch checkout before updating");
     }
     if !output.stdout.is_empty() {
         bail!(
-            "the AtlasFetch checkout has local changes; commit or stash them before running --update"
+            "the HaloFetch checkout has local changes; commit or stash them before running --update"
         );
     }
     Ok(())
 }
 
 fn detect_source_dir() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("ATLASFETCH_SRC").map(PathBuf::from) {
+    if let Some(path) = std::env::var_os("HALOFETCH_SRC").map(PathBuf::from) {
         return validate_source(path);
     }
 
@@ -82,11 +82,11 @@ fn detect_source_dir() -> Result<PathBuf> {
 
     if let Some(home) = BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()) {
         for relative in [
-            "Projetos/atlasfetch",
-            "src/atlasfetch",
-            "atlasfetch",
-            "code/atlasfetch",
-            "dev/atlasfetch",
+            "Projetos/halofetch",
+            "src/halofetch",
+            "halofetch",
+            "code/halofetch",
+            "dev/halofetch",
         ] {
             let candidate = home.join(relative);
             if is_source_dir(&candidate) {
@@ -96,7 +96,7 @@ fn detect_source_dir() -> Result<PathBuf> {
     }
 
     Err(eyre!(
-        "could not find the AtlasFetch source checkout; set ATLASFETCH_SRC to its path"
+        "could not find the HaloFetch source checkout; set HALOFETCH_SRC to its path"
     ))
 }
 
@@ -105,7 +105,7 @@ fn validate_source(path: PathBuf) -> Result<PathBuf> {
         Ok(path)
     } else {
         Err(eyre!(
-            "ATLASFETCH_SRC is not an AtlasFetch source checkout: {}",
+            "HALOFETCH_SRC is not an HaloFetch source checkout: {}",
             path.display()
         ))
     }
@@ -122,7 +122,7 @@ fn install_path() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    Ok(home.join(".local/bin/atlasfetch"))
+    Ok(home.join(".local/bin/halofetch"))
 }
 
 #[cfg(windows)]
@@ -132,7 +132,7 @@ fn install_path() -> Result<PathBuf> {
     Ok(dirs
         .data_local_dir()
         .join("Programs")
-        .join("atlasfetch")
+        .join("halofetch")
         .join(EXECUTABLE))
 }
 
@@ -159,7 +159,7 @@ fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
         .arg(destination)
         .status()?;
     if !status.success() {
-        bail!("failed to install AtlasFetch to {}", destination.display());
+        bail!("failed to install HaloFetch to {}", destination.display());
     }
     Ok(())
 }
@@ -183,7 +183,7 @@ fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
     if let Some(dir) = destination.parent() {
         if !on_path(dir, &std::env::var_os("PATH").unwrap_or_default()) {
             println!(
-                "Add {} to your PATH to run atlasfetch from any terminal.",
+                "Add {} to your PATH to run halofetch from any terminal.",
                 dir.display()
             );
         }
@@ -221,10 +221,10 @@ mod tests {
     #[test]
     fn path_lookup_ignores_case_and_trailing_separator() {
         let path =
-            std::env::join_paths([r"\Windows", r"\Users\Me\AppData\Local\Programs\AtlasFetch\"])
+            std::env::join_paths([r"\Windows", r"\Users\Me\AppData\Local\Programs\HaloFetch\"])
                 .unwrap();
         assert!(on_path(
-            Path::new(r"\users\me\appdata\local\programs\atlasfetch"),
+            Path::new(r"\users\me\appdata\local\programs\halofetch"),
             &path
         ));
         assert!(!on_path(Path::new(r"\Users\Me\bin"), &path));

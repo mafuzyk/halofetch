@@ -1,16 +1,16 @@
 [package]
-name = "atlasfetch"
+name = "halofetch"
 version = "3.0.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "System information fetch with centered logos, powerline panels and a live monitor"
-repository = "https://github.com/mafuzyk/atlasfetch"
+repository = "https://github.com/mafuzyk/halofetch"
 readme = "README.md"
 keywords = ["fetch", "linux", "terminal", "system-information", "tui"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "atlasfetch"
+name = "halofetch"
 path = "src/main.rs"
 
 [dependencies]

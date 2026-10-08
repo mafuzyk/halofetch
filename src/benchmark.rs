@@ -27,7 +27,7 @@ pub fn run(cfg: &Config, scene: Scene, iterations: u16) -> Result<()> {
     });
 
     let mut out = format!(
-        "AtlasFetch benchmark: {runs} runs, scene {}, render width {RENDER_WIDTH}\n",
+        "HaloFetch benchmark: {runs} runs, scene {}, render width {RENDER_WIDTH}\n",
         scene.key()
     );
     write_stats(&mut out, "collection", &collection);

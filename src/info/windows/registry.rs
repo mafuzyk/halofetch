@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(
             read_u64(
                 HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\AtlasfetchTest\Missing",
+                r"SOFTWARE\HalofetchTest\Missing",
                 "qwMemorySize"
             ),
             None

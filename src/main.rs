@@ -232,7 +232,7 @@ pub(crate) fn styled_text(lines: &[Line]) -> String {
     }
 }
 
-/// Writes `text` to stdout. A closed pipe, as in `atlasfetch logos list | head`, is
+/// Writes `text` to stdout. A closed pipe, as in `halofetch logos list | head`, is
 /// not an error.
 fn emit(text: &str) -> Result<()> {
     let mut stdout = io::stdout().lock();
@@ -356,7 +356,7 @@ fn apply_preset(name: &str) -> Result<()> {
             .custom_palettes
             .get(name)
             .cloned()
-            .ok_or_else(|| eyre!("preset '{name}' not found; use 'atlasfetch preset list'"))?,
+            .ok_or_else(|| eyre!("preset '{name}' not found; use 'halofetch preset list'"))?,
     };
     cfg.colors.palette = colors;
     cfg.save()?;
@@ -379,7 +379,7 @@ fn show_logo(key: Option<&str>) -> Result<()> {
     let cfg = Config::load()?;
     let shown = match key {
         Some(key) => logo::load_key(key, config::user_logo_dir().as_deref())
-            .ok_or_else(|| eyre!("logo '{key}' not found; use 'atlasfetch logos list'"))?,
+            .ok_or_else(|| eyre!("logo '{key}' not found; use 'halofetch logos list'"))?,
         None => {
             let system = info::collect();
             let logos = cfg.logo_set(&system);
@@ -399,12 +399,9 @@ mod tests {
 
     #[test]
     fn backup_takes_the_first_free_name() {
-        let path = Path::new("/home/u/.config/atlasfetch/config.json");
+        let path = Path::new("/home/u/.config/halofetch/config.json");
         let free = backup_path(path, |_| false);
-        assert_eq!(
-            free,
-            Path::new("/home/u/.config/atlasfetch/config.json.bak")
-        );
+        assert_eq!(free, Path::new("/home/u/.config/halofetch/config.json.bak"));
 
         let taken = |candidate: &Path| {
             candidate.ends_with("config.json.bak") || candidate.ends_with("config.json.bak.1")
@@ -412,7 +409,7 @@ mod tests {
         let third = backup_path(path, taken);
         assert_eq!(
             third,
-            Path::new("/home/u/.config/atlasfetch/config.json.bak.2")
+            Path::new("/home/u/.config/halofetch/config.json.bak.2")
         );
     }
 

@@ -157,7 +157,7 @@ mod tests {
             proc(1, 0, "systemd"),
             proc(100, 1, "kitty"),
             proc(200, 100, "fish"),
-            proc(300, 200, "atlasfetch"),
+            proc(300, 200, "halofetch"),
         ]);
         assert_eq!(table.chain(200), ["fish", "kitty", "systemd"]);
         assert_eq!(table.chain(999), Vec::<&str>::new());

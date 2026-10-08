@@ -543,7 +543,7 @@ fn render_monitor(frame: &mut Frame, area: Rect, lines: &[Line], interval_ms: u6
     frame.render_widget(
         Paragraph::new(Text::from(render::to_ratatui(lines))).block(
             Block::default()
-                .title(format!(" AtlasFetch · live {interval_ms}ms "))
+                .title(format!(" HaloFetch · live {interval_ms}ms "))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(BORDER_COLOR)),

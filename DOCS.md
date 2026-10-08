@@ -1,10 +1,10 @@
-# AtlasFetch — guia técnico
+# HaloFetch — guia técnico
 
 Este documento descreve a versão 3 por dentro: módulos, fluxo de execução, catálogo de campos, esquema e migração da configuração, regras de layout das cenas, arquitetura do editor e do workspace ao vivo. Para instalação e uso diário, comece pelo [README](README.md).
 
 ## Escopo
 
-O AtlasFetch mostra informações do sistema para terminais Linux e Windows (veja a seção [Windows](#windows)). Ele tem três saídas que usam o mesmo modelo de dados:
+O HaloFetch mostra informações do sistema para terminais Linux e Windows (veja a seção [Windows](#windows)). Ele tem três saídas que usam o mesmo modelo de dados:
 
 - a renderização estática, impressa uma vez no terminal ou em um pipe;
 - a saída JSON versionada, sem layout;
@@ -48,7 +48,7 @@ Objetivos da versão 3:
 ## Fluxo de execução
 
 ```text
-atlasfetch [opções] [comando]
+halofetch [opções] [comando]
      │
      ├── comando
      │     fetch    → render_static: info::collect, cfg.logo_set, scene::render
@@ -71,7 +71,7 @@ atlasfetch [opções] [comando]
 
 ## CLI
 
-A referência autoritativa é a ajuda do próprio programa, `atlasfetch --help` e `atlasfetch <comando> --help`.
+A referência autoritativa é a ajuda do próprio programa, `halofetch --help` e `halofetch <comando> --help`.
 
 Comandos:
 
@@ -221,7 +221,7 @@ Os nomes legados aceitos em arquivos da versão 3 editados à mão são resolvid
 
 ### Local e caminhos
 
-Local padrão: `$XDG_CONFIG_HOME/atlasfetch/config.json`, ou `~/.config/atlasfetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. No Windows, o padrão é `%APPDATA%\atlasfetch\config.json`. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório.
+Local padrão: `$XDG_CONFIG_HOME/halofetch/config.json`, ou `~/.config/halofetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. No Windows, o padrão é `%APPDATA%\halofetch\config.json`. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório.
 
 ### Esquema da versão 3
 
@@ -379,7 +379,7 @@ Fallback empilhado: logo (se couber na largura menos o padding), título central
 
 `dashboard` usa caixas arredondadas. A largura útil é `largura − 2 × padding`, e abaixo de 4 colunas nada é desenhado.
 
-1. A caixa do logo tem o título configurado (`{user}@{host}`, ou `AtlasFetch` se o título estiver desabilitado). Se o logo cabe ao lado da caixa do Sistema, as duas ficam lado a lado, com a mesma altura interna. A reserva é de 37 colunas: 4 da moldura do logo, 1 de espaço entre as caixas, 30 do interior mínimo da caixa do Sistema e 2 das bordas dela.
+1. A caixa do logo tem o título configurado (`{user}@{host}`, ou `HaloFetch` se o título estiver desabilitado). Se o logo cabe ao lado da caixa do Sistema, as duas ficam lado a lado, com a mesma altura interna. A reserva é de 37 colunas: 4 da moldura do logo, 1 de espaço entre as caixas, 30 do interior mínimo da caixa do Sistema e 2 das bordas dela.
 2. Se não cabe, a caixa do logo ocupa a largura toda acima da caixa do Sistema. Se nem o logo cabe, só a caixa do Sistema é desenhada.
 3. A caixa do Sistema tem o título fixo `System` e as entradas habilitadas no estilo `plain`. Usa duas colunas quando o conteúdo tem pelo menos `2 × maior linha + 4`; a primeira metade das entradas fica à esquerda. A faixa de cores aparece no fim, alinhada aos rótulos.
 4. A caixa `Resources` mostra todos os gauges que têm leitura, mesmo que o campo correspondente esteja oculto ou desabilitado. Usa duas colunas quando o interior tem 70 colunas ou mais; caso contrário, uma coluna de linhas com no máximo 46 colunas. Sem nenhum gauge, a caixa não aparece.
@@ -504,7 +504,7 @@ Ao alterar uma tecla, atualize o teste correspondente em `app.rs`, a ajuda (`HEL
 
 ## Workspace ao vivo
 
-`atlasfetch monitor` (ou `startup.mode = monitor` em uma execução interativa) abre o workspace de `live.rs`.
+`halofetch monitor` (ou `startup.mode = monitor` em uma execução interativa) abre o workspace de `live.rs`.
 
 Ciclo:
 
@@ -513,7 +513,7 @@ Ciclo:
 3. Teclas são convertidas em sequências ANSI (`key_bytes`) e enviadas ao shell; colagem é enviada entre marcadores de colagem entre colchetes se o shell os tiver solicitado. Redimensionar a janela também redesenha.
 4. `Ctrl+Q` encerra o workspace, e a saída do shell também. O shell é finalizado antes de sair.
 
-Layout: a região superior tem a altura das linhas da cena mais duas bordas, sem passar de 60 % da altura da tela. A região inferior recebe o restante e mostra o título "Shell · Ctrl+Q closes workspace". A região superior tem o título `AtlasFetch · live Nms`.
+Layout: a região superior tem a altura das linhas da cena mais duas bordas, sem passar de 60 % da altura da tela. A região inferior recebe o restante e mostra o título "Shell · Ctrl+Q closes workspace". A região superior tem o título `HaloFetch · live Nms`.
 
 Shell: `$SHELL -i` (ou `/bin/sh`), com `TERM=xterm-256color` e o diretório atual. Para o fish, o comando recebe `--features=no-query-term` e apaga `fish_greeting` com `-C`, pois a saudação de um fetch atrasaria o prompt e o terminal embutido não responde às consultas.
 
@@ -584,13 +584,13 @@ As funções auxiliares puras em `info/windows/` têm testes unitários que roda
 
 `update::run`:
 
-1. localiza o checkout: `ATLASFETCH_SRC` (valida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/atlasfetch`, `src/atlasfetch`, `atlasfetch`, `code/atlasfetch` e `dev/atlasfetch` dentro da home. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`;
+1. localiza o checkout: `HALOFETCH_SRC` (valida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/halofetch`, `src/halofetch`, `halofetch`, `code/halofetch` e `dev/halofetch` dentro da home. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`;
 2. recusa o checkout se `git status --porcelain` mostrar alterações;
-3. executa `git pull --rebase --autostash`, `cargo build --release --locked` e `install -m 755` para `~/.local/bin/atlasfetch`.
+3. executa `git pull --rebase --autostash`, `cargo build --release --locked` e `install -m 755` para `~/.local/bin/halofetch`.
 
 Se qualquer passo falha, o comando para com o motivo. Releases empacotadas não usam esse caminho.
 
-No Windows, o passo 3 gera `target\release\atlasfetch.exe` e o instala em `%LOCALAPPDATA%\Programs\atlasfetch\atlasfetch.exe`. O executável em uso é renomeado para `atlasfetch.exe.old` antes da cópia, e o `.old` anterior é removido na atualização seguinte (melhor esforço). Se a pasta de instalação não estiver no `PATH`, a atualização imprime a instrução para adicioná-la.
+No Windows, o passo 3 gera `target\release\halofetch.exe` e o instala em `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. O executável em uso é renomeado para `halofetch.exe.old` antes da cópia, e o `.old` anterior é removido na atualização seguinte (melhor esforço). Se a pasta de instalação não estiver no `PATH`, a atualização imprime a instrução para adicioná-la.
 
 ## Qualidade e CI
 
@@ -603,7 +603,7 @@ cargo test --all-targets --all-features --locked
 cargo build --release --locked
 ```
 
-`.github/workflows/ci.yml` executa essas etapas em pushes para `main` e em pull requests, com o toolchain estável, `rustfmt` e `clippy`, em `ubuntu-latest` e `windows-latest`. A verificação de formatação roda só no Ubuntu; clippy, testes e build de release rodam nos dois. `release.yml` roda quando uma tag `v*` é enviada: executa os testes na variante GNU, compila as variantes GNU, musl (esta com `musl-tools`) e `x86_64-pc-windows-msvc` (em `windows-latest`). Os binários Linux são empacotados em `.tar.gz`, e o da Windows em `.zip` com `atlasfetch.exe`, `LICENSE` e `README.md`; cada pacote recebe um arquivo `.sha256` ao lado.
+`.github/workflows/ci.yml` executa essas etapas em pushes para `main` e em pull requests, com o toolchain estável, `rustfmt` e `clippy`, em `ubuntu-latest` e `windows-latest`. A verificação de formatação roda só no Ubuntu; clippy, testes e build de release rodam nos dois. `release.yml` roda quando uma tag `v*` é enviada: executa os testes na variante GNU, compila as variantes GNU, musl (esta com `musl-tools`) e `x86_64-pc-windows-msvc` (em `windows-latest`). Os binários Linux são empacotados em `.tar.gz`, e o da Windows em `.zip` com `halofetch.exe`, `LICENSE` e `README.md`; cada pacote recebe um arquivo `.sha256` ao lado.
 
 Os testes cobrem, entre outros: o catálogo de campos (chaves, aliases, grupos e textos); defaults e validação da configuração; normalização; migração de v1 e v2 com backup; quarentena; gravação atômica e backups numerados; cada cena em várias larguras; a navegação, a edição e os atalhos do editor; a saída JSON; a formatação dos valores; a seleção de logos e a limpeza de ASCII; a detecção do checkout do atualizador.
 

@@ -378,16 +378,16 @@ fn default_config_dir() -> Result<PathBuf> {
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
     {
-        return Ok(xdg.join("atlasfetch"));
+        return Ok(xdg.join("halofetch"));
     }
     let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
-    Ok(base.home_dir().join(".config").join("atlasfetch"))
+    Ok(base.home_dir().join(".config").join("halofetch"))
 }
 
 #[cfg(windows)]
 fn default_config_dir() -> Result<PathBuf> {
     let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
-    Ok(base.config_dir().join("atlasfetch"))
+    Ok(base.config_dir().join("halofetch"))
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -637,7 +637,7 @@ fn load_legacy(path: &Path, value: Value) -> Result<Config> {
     fs::copy(path, &backup).map_err(|err| eyre!("cannot back up {}: {err}", path.display()))?;
     config.save_to(path)?;
     eprintln!(
-        "atlasfetch: migrated configuration to v{VERSION} (backup: {})",
+        "halofetch: migrated configuration to v{VERSION} (backup: {})",
         backup.display()
     );
     Ok(config)
@@ -648,11 +648,11 @@ fn quarantine(path: &Path, reason: &str) -> Config {
     let target = numbered_sibling(path, "invalid");
     match fs::rename(path, &target) {
         Ok(()) => eprintln!(
-            "atlasfetch: warning: {reason}; moved the file to {} and using defaults",
+            "halofetch: warning: {reason}; moved the file to {} and using defaults",
             target.display()
         ),
         Err(err) => eprintln!(
-            "atlasfetch: warning: {reason}; could not move the file aside ({err}); using defaults"
+            "halofetch: warning: {reason}; could not move the file aside ({err}); using defaults"
         ),
     }
     Config::default()
@@ -855,7 +855,7 @@ mod tests {
   "version": 2,
   "logo": {
     "key": "arch",
-    "path": "~/.config/atlasfetch/logo.txt",
+    "path": "~/.config/halofetch/logo.txt",
     "colors": [{"r": 255, "g": 0, "b": 0}, {"r": 0, "g": 0, "b": 255}],
     "color_dir": "vertical"
   },
@@ -899,7 +899,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let dir = std::env::temp_dir()
-                .join(format!("atlasfetch-config-{}-{name}", std::process::id()));
+                .join(format!("halofetch-config-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             Scratch(dir)
@@ -1348,8 +1348,8 @@ mod tests {
     #[test]
     fn config_parent_uses_the_directory_of_the_file() {
         assert_eq!(
-            config_parent(Path::new("/tmp/atlasfetch/custom.json")).unwrap(),
-            PathBuf::from("/tmp/atlasfetch")
+            config_parent(Path::new("/tmp/halofetch/custom.json")).unwrap(),
+            PathBuf::from("/tmp/halofetch")
         );
     }
 }

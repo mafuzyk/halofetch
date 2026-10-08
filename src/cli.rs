@@ -84,7 +84,7 @@ pub enum LogosAction {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "atlasfetch",
+    name = "halofetch",
     about = "Centered ASCII art with powerline panels",
     version
 )]
@@ -92,7 +92,7 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Configuration file [default: ~/.config/atlasfetch/config.json]
+    /// Configuration file [default: ~/.config/halofetch/config.json]
     #[arg(short = 'c', long = "config", global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn scene_is_accepted_before_and_after_the_subcommand() {
-        let before = parse(&["atlasfetch", "--scene", "side", "fetch"]);
-        let after = parse(&["atlasfetch", "fetch", "--scene", "side"]);
+        let before = parse(&["halofetch", "--scene", "side", "fetch"]);
+        let after = parse(&["halofetch", "fetch", "--scene", "side"]);
         assert_eq!(before.scene, Some(Scene::Side));
         assert_eq!(after.scene, Some(Scene::Side));
     }
@@ -158,63 +158,63 @@ mod tests {
     #[test]
     fn scene_aliases_are_parsed_and_unknown_scenes_rejected() {
         assert_eq!(
-            parse(&["atlasfetch", "--scene", "cockpit"]).scene,
+            parse(&["halofetch", "--scene", "cockpit"]).scene,
             Some(Scene::Dashboard)
         );
-        assert!(Args::try_parse_from(["atlasfetch", "--scene", "nope"]).is_err());
+        assert!(Args::try_parse_from(["halofetch", "--scene", "nope"]).is_err());
     }
 
     #[test]
     fn monitor_interval_is_optional_and_ranged() {
-        let given = parse(&["atlasfetch", "monitor", "-i", "500"]);
+        let given = parse(&["halofetch", "monitor", "-i", "500"]);
         assert!(matches!(
             given.command,
             Some(Command::Monitor {
                 interval: Some(500)
             })
         ));
-        let default = parse(&["atlasfetch", "monitor"]);
+        let default = parse(&["halofetch", "monitor"]);
         assert!(matches!(
             default.command,
             Some(Command::Monitor { interval: None })
         ));
-        assert!(Args::try_parse_from(["atlasfetch", "monitor", "-i", "5"]).is_err());
+        assert!(Args::try_parse_from(["halofetch", "monitor", "-i", "5"]).is_err());
     }
 
     #[test]
     fn fetch_watch_and_interval_are_parsed() {
         assert!(matches!(
-            parse(&["atlasfetch", "fetch"]).command,
+            parse(&["halofetch", "fetch"]).command,
             Some(Command::Fetch {
                 watch: false,
                 interval: None
             })
         ));
         assert!(matches!(
-            parse(&["atlasfetch", "fetch", "--watch"]).command,
+            parse(&["halofetch", "fetch", "--watch"]).command,
             Some(Command::Fetch {
                 watch: true,
                 interval: None
             })
         ));
         assert!(matches!(
-            parse(&["atlasfetch", "fetch", "-w", "-i", "500"]).command,
+            parse(&["halofetch", "fetch", "-w", "-i", "500"]).command,
             Some(Command::Fetch {
                 watch: true,
                 interval: Some(500)
             })
         ));
-        assert!(Args::try_parse_from(["atlasfetch", "fetch", "--interval", "500"]).is_err());
+        assert!(Args::try_parse_from(["halofetch", "fetch", "--interval", "500"]).is_err());
     }
 
     #[test]
     fn benchmark_runs_default_to_five() {
-        let short = parse(&["atlasfetch", "benchmark", "-n", "3"]);
+        let short = parse(&["halofetch", "benchmark", "-n", "3"]);
         assert!(matches!(
             short.command,
             Some(Command::Benchmark { iterations: 3 })
         ));
-        let default = parse(&["atlasfetch", "benchmark"]);
+        let default = parse(&["halofetch", "benchmark"]);
         assert!(matches!(
             default.command,
             Some(Command::Benchmark { iterations: 5 })
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn config_without_action_is_allowed() {
-        let args = parse(&["atlasfetch", "config"]);
+        let args = parse(&["halofetch", "config"]);
         assert!(matches!(
             args.command,
             Some(Command::Config { action: None })
@@ -232,9 +232,9 @@ mod tests {
 
     #[test]
     fn legacy_flags_still_parse() {
-        let args = parse(&["atlasfetch", "--preset", "agender", "--just-ascii"]);
+        let args = parse(&["halofetch", "--preset", "agender", "--just-ascii"]);
         assert_eq!(args.preset.as_deref(), Some("agender"));
         assert!(args.just_ascii);
-        assert!(parse(&["atlasfetch", "-i"]).setup);
+        assert!(parse(&["halofetch", "-i"]).setup);
     }
 }

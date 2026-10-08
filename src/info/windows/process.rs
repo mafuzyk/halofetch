@@ -298,7 +298,7 @@ mod tests {
             proc(4, 0, "system"),
             proc(100, 4, "explorer"),
             proc(200, 100, "pwsh"),
-            proc(300, 200, "atlasfetch"),
+            proc(300, 200, "halofetch"),
         ]);
         assert_eq!(table.chain(200), ["pwsh", "explorer", "system"]);
         assert_eq!(table.parent_of(300), Some(200));

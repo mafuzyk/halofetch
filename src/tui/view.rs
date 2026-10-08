@@ -160,7 +160,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let [left, right] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(12)]).areas(area);
     let title = Line::from(Span::styled(
-        " AtlasFetch setup",
+        " HaloFetch setup",
         palette.accent.add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(title), left);
@@ -241,7 +241,7 @@ fn draw_welcome(frame: &mut Frame, area: Rect) {
     let palette = palette();
     let lines = vec![
         Line::from(Span::styled(
-            "Welcome to AtlasFetch setup.",
+            "Welcome to HaloFetch setup.",
             palette.accent.add_modifier(Modifier::BOLD),
         )),
         Line::from("Pick a section with ↑↓ and open it with →. Changes apply live."),

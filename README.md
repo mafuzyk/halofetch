@@ -1,14 +1,14 @@
 <div align="center">
 
-# AtlasFetch
+# HaloFetch
 
 ### Your Linux, composed — not dumped.
 
 A fast system fetch, a live hardware monitor, and a real interactive shell<br>
 sharing one carefully arranged terminal canvas.
 
-[![CI](https://github.com/mafuzyk/atlasfetch/actions/workflows/ci.yml/badge.svg)](https://github.com/mafuzyk/atlasfetch/actions/workflows/ci.yml)
-[![Release](https://github.com/mafuzyk/atlasfetch/actions/workflows/release.yml/badge.svg)](https://github.com/mafuzyk/atlasfetch/actions/workflows/release.yml)
+[![CI](https://github.com/mafuzyk/halofetch/actions/workflows/ci.yml/badge.svg)](https://github.com/mafuzyk/halofetch/actions/workflows/ci.yml)
+[![Release](https://github.com/mafuzyk/halofetch/actions/workflows/release.yml/badge.svg)](https://github.com/mafuzyk/halofetch/actions/workflows/release.yml)
 [![Rust](https://img.shields.io/badge/Rust-2021-e86b37?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-8b5cf6)](LICENSE)
 
@@ -16,11 +16,11 @@ sharing one carefully arranged terminal canvas.
 
 </div>
 
-AtlasFetch treats terminal output like a layout instead of a list. Its scenes place a colored ASCII logo next to the information you care about; its live monitor keeps that composition above a PTY-backed shell you can use normally.
+HaloFetch treats terminal output like a layout instead of a list. Its scenes place a colored ASCII logo next to the information you care about; its live monitor keeps that composition above a PTY-backed shell you can use normally.
 
 It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. Linux is the primary target. Windows 10 and 11 are supported as well, see [Windows](#windows).
 
-## Why AtlasFetch?
+## Why HaloFetch?
 
 - **Two modes.** Print one fetch and exit, or stay as a live monitor with a shell underneath.
 - **Three scenes, one renderer.** `classic`, `side` and `dashboard` share the same rows, gauges and fallbacks. The editor preview uses the same code as the output.
@@ -35,7 +35,7 @@ It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it
 ### 1. Fetch and leave
 
 ```bash
-atlasfetch fetch
+halofetch fetch
 ```
 
 Renders one fetch and exits. Use it for terminal greetings, screenshots, dotfiles, or showing everyone your kernel version.
@@ -49,8 +49,8 @@ Renders one fetch and exits. Use it for terminal greetings, screenshots, dotfile
 Try a scene without changing your configuration:
 
 ```bash
-atlasfetch fetch --scene side
-atlasfetch --scene dashboard
+halofetch fetch --scene side
+halofetch --scene dashboard
 ```
 
 The scenes adapt to the width of the terminal:
@@ -84,18 +84,18 @@ Static output is 100 columns wide unless the terminal says otherwise. `COLUMNS` 
                  ..';::c'  .;loooo:'
 ```
 
-The sample is `atlasfetch fetch --scene side` with `NO_COLOR=1`. Nerd Font icons and powerline separators may show as blanks in a font without them.
+The sample is `halofetch fetch --scene side` with `NO_COLOR=1`. Nerd Font icons and powerline separators may show as blanks in a font without them.
 
 ### 2. Live monitor
 
 ```bash
-atlasfetch monitor
+halofetch monitor
 ```
 
 The upper region shows the scene and refreshes its values at the configured interval. The lower region is a real shell in a pseudo-terminal, drawn through a VT100 parser.
 
 ```text
-╭─ AtlasFetch · live 1000ms ─────────────────────────────╮
+╭─ HaloFetch · live 1000ms ─────────────────────────────╮
 │ scene with live values, at most 60% of the screen      │
 ╰────────────────────────────────────────────────────────╯
 ╭─ Shell · Ctrl+Q closes workspace ──────────────────────╮
@@ -107,21 +107,21 @@ The upper region shows the scene and refreshes its values at the configured inte
 - The shell is `$SHELL -i`. Fish starts without its greeting and without its terminal query. On Windows the shell is PowerShell or cmd unless `$SHELL` names a file; see [Windows](#windows).
 - Values refreshed in place: uptime, load, process count, memory, swap, disk, battery, CPU temperature, backlight, CPU usage and GPU usage. Package, font and desktop detection is not repeated. Which of these exist on Windows is listed in [Windows](#windows).
 - The screen is redrawn after each refresh and whenever the shell prints something, not in a tight loop.
-- `atlasfetch monitor -i 500` refreshes every 500 ms. The interval can be 100 to 60000 ms.
+- `halofetch monitor -i 500` refreshes every 500 ms. The interval can be 100 to 60000 ms.
 - Monitor needs an interactive terminal. In a pipe, use `fetch`.
 
-Set **Startup → Mode** to *monitor* in the editor and a plain `atlasfetch` opens this workspace in an interactive terminal. `atlasfetch fetch` always prints one static fetch.
+Set **Startup → Mode** to *monitor* in the editor and a plain `halofetch` opens this workspace in an interactive terminal. `halofetch fetch` always prints one static fetch.
 
 ## Quick start
 
 ```bash
-atlasfetch
+halofetch
 ```
 
-In an interactive terminal without a configuration file, this opens the setup editor. Saving creates `~/.config/atlasfetch/config.json`. Quitting without saving keeps the defaults and writes nothing. Return to the editor whenever you like:
+In an interactive terminal without a configuration file, this opens the setup editor. Saving creates `~/.config/halofetch/config.json`. Quitting without saving keeps the defaults and writes nothing. Return to the editor whenever you like:
 
 ```bash
-atlasfetch config
+halofetch config
 ```
 
 The editor has five sections:
@@ -160,13 +160,13 @@ Keys:
 
 ### Fields and panels
 
-AtlasFetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Resources, Network and Power. Each entry in a panel can be shown or hidden, renamed, given another icon, drawn as a bar when its field has a gauge, and moved within or between the left and right panels. Labels are limited to 24 characters and icons to 4.
+HaloFetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Resources, Network and Power. Each entry in a panel can be shown or hidden, renamed, given another icon, drawn as a bar when its field has a gauge, and moved within or between the left and right panels. Labels are limited to 24 characters and icons to 4.
 
 Fields such as CPU usage and GPU usage are live values. They appear only in monitor mode.
 
 ### Themes and ASCII
 
-Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` values separated by spaces, change the gradient direction, or save the current palette under a name. Saved palettes appear next to the built-in ones and can be applied from the command line with `atlasfetch preset apply NAME`.
+Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` values separated by spaces, change the gradient direction, or save the current palette under a name. Saved palettes appear next to the built-in ones and can be applied from the command line with `halofetch preset apply NAME`.
 
 The logo can be detected from your distribution, chosen from the 456 embedded logos, read from a file, or pasted. A pasted logo is saved as `custom-logo.txt` next to the configuration when you save. A file named after a logo in `logos/` inside the configuration directory replaces the embedded logo with the same name.
 
@@ -177,16 +177,16 @@ Nerd Fonts are recommended for the default icons. The layout works without them.
 The default configuration lives at:
 
 ```text
-~/.config/atlasfetch/config.json
+~/.config/halofetch/config.json
 ```
 
-Run `atlasfetch config path` to print the path in use. The configuration is validated before it is saved and written atomically. Values that are out of range in a file are limited to their range when loaded.
+Run `halofetch config path` to print the path in use. The configuration is validated before it is saved and written atomically. Values that are out of range in a file are limited to their range when loaded.
 
 Use another profile without touching your daily setup:
 
 ```bash
-atlasfetch -c ./screenshots.json config
-atlasfetch -c ./screenshots.json fetch
+halofetch -c ./screenshots.json config
+halofetch -c ./screenshots.json fetch
 ```
 
 Minimal shape of the version 3 schema. Field entries are shown as two per panel; the default file lists all of them.
@@ -281,34 +281,34 @@ The setup editor is the recommended way to edit the file. See [DOCS.md](DOCS.md)
 
 | Command | What it does |
 |---|---|
-| `atlasfetch` | Interactive: opens the editor on the first run, then follows the startup mode. Otherwise prints the static fetch |
-| `atlasfetch fetch` | Print one static fetch and exit |
-| `atlasfetch fetch --scene side` | Print one fetch with the given scene |
-| `atlasfetch --format json` | Print the detected system information as JSON |
-| `atlasfetch monitor` | Open the live workspace |
-| `atlasfetch monitor -i 500` | Open the live workspace, refreshing every 500 ms |
-| `atlasfetch config` | Open the setup editor (`config edit` is the same) |
-| `atlasfetch config path` | Print the active configuration path |
-| `atlasfetch config reset` | After confirmation, move the configuration aside as `.bak` and open the editor with defaults |
-| `atlasfetch preset list` | List built-in and custom palettes |
-| `atlasfetch preset apply dracula` | Use a palette for the logo colors and save |
-| `atlasfetch logos list` | List logo keys: embedded logos and files in the user logo directory, sorted |
-| `atlasfetch logos show` | Print the logo this machine's configuration selects, colored with the palette |
-| `atlasfetch logos show arch` | Print one logo colored with the palette |
-| `atlasfetch benchmark` | Measure information collection and the full render (`-n` sets the runs, 5 by default) |
-| `atlasfetch update` | Pull, rebuild and install from the source checkout |
+| `halofetch` | Interactive: opens the editor on the first run, then follows the startup mode. Otherwise prints the static fetch |
+| `halofetch fetch` | Print one static fetch and exit |
+| `halofetch fetch --scene side` | Print one fetch with the given scene |
+| `halofetch --format json` | Print the detected system information as JSON |
+| `halofetch monitor` | Open the live workspace |
+| `halofetch monitor -i 500` | Open the live workspace, refreshing every 500 ms |
+| `halofetch config` | Open the setup editor (`config edit` is the same) |
+| `halofetch config path` | Print the active configuration path |
+| `halofetch config reset` | After confirmation, move the configuration aside as `.bak` and open the editor with defaults |
+| `halofetch preset list` | List built-in and custom palettes |
+| `halofetch preset apply dracula` | Use a palette for the logo colors and save |
+| `halofetch logos list` | List logo keys: embedded logos and files in the user logo directory, sorted |
+| `halofetch logos show` | Print the logo this machine's configuration selects, colored with the palette |
+| `halofetch logos show arch` | Print one logo colored with the palette |
+| `halofetch benchmark` | Measure information collection and the full render (`-n` sets the runs, 5 by default) |
+| `halofetch update` | Pull, rebuild and install from the source checkout |
 
-`--scene`, `--format` and `-c, --config PATH` work before or after the command. `atlasfetch --help` is the authoritative reference.
+`--scene`, `--format` and `-c, --config PATH` work before or after the command. `halofetch --help` is the authoritative reference.
 
 ## Installation
 
 ### Build from source
 
 ```bash
-git clone https://github.com/mafuzyk/atlasfetch.git
-cd atlasfetch
+git clone https://github.com/mafuzyk/halofetch.git
+cd halofetch
 cargo build --release --locked
-install -Dm755 target/release/atlasfetch ~/.local/bin/atlasfetch
+install -Dm755 target/release/halofetch ~/.local/bin/halofetch
 ```
 
 Make sure `~/.local/bin` is in `PATH`. Rust and Cargo are needed only to build from source.
@@ -316,17 +316,17 @@ Make sure `~/.local/bin` is in `PATH`. Rust and Cargo are needed only to build f
 ### Nix
 
 ```bash
-nix run github:mafuzyk/atlasfetch
-nix profile install github:mafuzyk/atlasfetch
+nix run github:mafuzyk/halofetch
+nix profile install github:mafuzyk/halofetch
 ```
 
 ### Update a source installation
 
 ```bash
-atlasfetch update
+halofetch update
 ```
 
-The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/atlasfetch` (on Windows, see [Windows](#windows)). It finds the checkout through `ATLASFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `ATLASFETCH_SRC=/path/to/atlasfetch` to choose one explicitly.
+The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/halofetch` (on Windows, see [Windows](#windows)). It finds the checkout through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `HALOFETCH_SRC=/path/to/halofetch` to choose one explicitly.
 
 ### Start with your shell
 
@@ -335,21 +335,21 @@ Static mode is the sensible choice for a greeting:
 ```fish
 # ~/.config/fish/config.fish
 if status is-interactive
-    atlasfetch fetch
+    halofetch fetch
 end
 ```
 
 ```bash
 # ~/.bashrc
 if [[ $- == *i* ]]; then
-    atlasfetch fetch
+    halofetch fetch
 fi
 ```
 
 ```zsh
 # ~/.zshrc
 if [[ -o interactive ]]; then
-    atlasfetch fetch
+    halofetch fetch
 fi
 ```
 
@@ -357,35 +357,35 @@ Starting the live workspace from the shell it launches would nest one shell insi
 
 ## Windows
 
-AtlasFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program. The fetch, the editor, the JSON output and the monitor work as on Linux. Fields that have no Windows source are hidden, as listed below.
+HaloFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program. The fetch, the editor, the JSON output and the monitor work as on Linux. Fields that have no Windows source are hidden, as listed below.
 
 ### Install
 
-Download `atlasfetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
+Download `halofetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\atlasfetch-v3.0.0-x86_64-pc-windows-msvc.zip
+Get-FileHash -Algorithm SHA256 .\halofetch-v3.0.0-x86_64-pc-windows-msvc.zip
 ```
 
-Extract `atlasfetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
+Extract `halofetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
 
 To build from source, install Rust with the MSVC toolchain and the Visual Studio C++ build tools, then run:
 
 ```powershell
-git clone https://github.com/mafuzyk/atlasfetch.git
-cd atlasfetch
+git clone https://github.com/mafuzyk/halofetch.git
+cd halofetch
 cargo install --path . --locked
 ```
 
-`cargo install` places `atlasfetch.exe` in `%USERPROFILE%\.cargo\bin`. To greet every PowerShell session, add `atlasfetch fetch` to your PowerShell profile (`$PROFILE`).
+`cargo install` places `halofetch.exe` in `%USERPROFILE%\.cargo\bin`. To greet every PowerShell session, add `halofetch fetch` to your PowerShell profile (`$PROFILE`).
 
 ### Configuration
 
-The configuration is `%APPDATA%\atlasfetch\config.json`. `atlasfetch config path` prints the path in use, and `-c` selects another file as on Linux. Your own logos go in the `logos` folder next to it. A logo pasted in the editor is saved there as `custom-logo.txt`.
+The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` prints the path in use, and `-c` selects another file as on Linux. Your own logos go in the `logos` folder next to it. A logo pasted in the editor is saved there as `custom-logo.txt`.
 
 ### Updating
 
-`atlasfetch update` needs a source checkout, with `git` and `cargo` on `PATH`. It builds `target\release\atlasfetch.exe` and installs it to `%LOCALAPPDATA%\Programs\atlasfetch\atlasfetch.exe`. Windows does not let a running program be overwritten, so the installed copy is renamed to `atlasfetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add. Release archives are not updated by this command; replace `atlasfetch.exe` yourself.
+`halofetch update` needs a source checkout, with `git` and `cargo` on `PATH`. It builds `target\release\halofetch.exe` and installs it to `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. Windows does not let a running program be overwritten, so the installed copy is renamed to `halofetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add. Release archives are not updated by this command; replace `halofetch.exe` yourself.
 
 ### What is shown
 
@@ -405,11 +405,11 @@ The configuration is `%APPDATA%\atlasfetch\config.json`. `atlasfetch config path
 
 These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, VRAM, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
 
-Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. In the classic console, AtlasFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
+Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
 
 ### Monitor
 
-`atlasfetch monitor` starts the shell from `$SHELL` when that names an existing file. Otherwise it uses `pwsh.exe`, then `powershell.exe`, then `%COMSPEC%` (normally `cmd.exe`). Bash, zsh and fish start with `-i`. PowerShell and cmd start without arguments. Git Bash sets `$SHELL` to a path Windows cannot open, so PowerShell is used unless you set `SHELL` to a Windows path. `Ctrl+Q` closes the workspace.
+`halofetch monitor` starts the shell from `$SHELL` when that names an existing file. Otherwise it uses `pwsh.exe`, then `powershell.exe`, then `%COMSPEC%` (normally `cmd.exe`). Bash, zsh and fish start with `-i`. PowerShell and cmd start without arguments. Git Bash sets `$SHELL` to a path Windows cannot open, so PowerShell is used unless you set `SHELL` to a Windows path. `Ctrl+Q` closes the workspace.
 
 ### Pasting a logo
 
@@ -418,7 +418,7 @@ Legacy consoles do not deliver a paste as a paste event, so the editor offers **
 ## Machine-readable output
 
 ```bash
-atlasfetch --format json | jq '.system.cpu'
+halofetch --format json | jq '.system.cpu'
 ```
 
 The output is a JSON object with `schema_version` 2, `system` and `gauges`. A shortened example from a real run:
@@ -448,7 +448,7 @@ The output is a JSON object with `schema_version` 2, `system` and `gauges`. A sh
 
 ## Development
 
-AtlasFetch collects one model of the system, lays it out in a scene, and draws it through one styled canvas. The static output, the editor preview and the live monitor all use that path.
+HaloFetch collects one model of the system, lays it out in a scene, and draws it through one styled canvas. The static output, the editor preview and the live monitor all use that path.
 
 ```text
 /proc, /sys, /etc, environment, local commands
@@ -516,7 +516,7 @@ Contributions and bug reports are welcome. Please include the terminal emulator,
 
 ## License
 
-AtlasFetch is licensed under [GPL-3.0-or-later](LICENSE).
+HaloFetch is licensed under [GPL-3.0-or-later](LICENSE).
 
 <div align="center">
 
