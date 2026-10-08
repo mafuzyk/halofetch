@@ -97,7 +97,7 @@ macro_rules! theme {
 pub fn all_themes() -> Vec<Theme> {
     vec![
         theme!(
-            "singularityos",
+            "amethyst",
             ["#C084FC", "#A78BFA", "#818CF8", "#6366F1", "#4F46E5"]
         ),
         theme!(

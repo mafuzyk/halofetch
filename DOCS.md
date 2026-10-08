@@ -240,7 +240,7 @@ Config
 │   ├── gradient         "horizontal" | "vertical"
 │   └── auto_small       true                 (usa a variante _small em terminais estreitos)
 ├── colors
-│   ├── palette          ["#C084FC", ...]     (1 a 16 cores; padrão do singularityos)
+│   ├── palette          ["#C084FC", ...]     (1 a 16 cores; padrão do amethyst)
 │   ├── title            "#FF9A98"
 │   ├── separator        "#9D85FF"
 │   └── value            "#F5DCE3"
@@ -621,6 +621,6 @@ Receitas comuns:
 
 - **Novo campo.** Adicione a variante em `src/field.rs` com chave, rótulo, ícone, grupo, descrição e as flags de gauge e de monitor; atualize `Field::ALL` e o tamanho do array; implemente a coleta em `src/info/`; adicione um valor em `SysInfo::sample()`. Se o campo substituir outro nome, mantenha o nome antigo em `from_key`.
 - **Nova cena.** Adicione a variante em `Scene`, com `ALL`, nome, rótulo, descrição e aliases em `FromStr`; implemente-a em `src/render/scene.rs` e confirme que `every_scene_fits_every_width` passa com ela.
-- **Nova paleta.** Adicione uma entrada `theme!` em `src/theme.rs`. A paleta padrão deve continuar igual à do `singularityos`, como exige um teste.
+- **Nova paleta.** Adicione uma entrada `theme!` em `src/theme.rs`. A paleta padrão deve continuar igual à do `amethyst`, como exige um teste.
 - **Novo logo.** Coloque o arquivo em `logos/` com o nome da chave; use `_small` para a variante compacta. `build.rs` o incorpora automaticamente.
 - **Nova chave de configuração.** Adicione o campo com `#[serde(default)]`, a regra de normalização e a de validação, e um teste. Uma mudança incompatível exige nova versão do esquema, migração a partir da versão anterior e atualização deste guia e do README.

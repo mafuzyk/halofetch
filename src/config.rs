@@ -242,7 +242,7 @@ impl FieldEntry {
 // ── Defaults ─────────────────────────────────────────────────────────────
 
 fn default_palette() -> Vec<Color> {
-    // Same colors as the built-in "singularityos" theme; a test keeps them in sync.
+    // Same colors as the built-in "amethyst" theme; a test keeps them in sync.
     vec![
         Color::new(0xC0, 0x84, 0xFC),
         Color::new(0xA7, 0x8B, 0xFA),
@@ -935,8 +935,8 @@ mod tests {
     }
 
     #[test]
-    fn default_palette_matches_the_singularityos_theme() {
-        let theme = theme::find_theme("singularityos").unwrap();
+    fn default_palette_matches_the_amethyst_theme() {
+        let theme = theme::find_theme("amethyst").unwrap();
         assert_eq!(Config::default().colors.palette, theme.colors);
     }
 
