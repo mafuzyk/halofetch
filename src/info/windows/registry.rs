@@ -5,7 +5,8 @@ use std::ptr::{from_mut, null, null_mut};
 
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, KEY_READ, RRF_RT_REG_DWORD,
+    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, KEY_READ, REG_BINARY, REG_DWORD,
+    REG_QWORD, REG_VALUE_TYPE, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_QWORD,
     RRF_RT_REG_SZ,
 };
 
@@ -80,6 +81,44 @@ pub(super) fn read_u32(root: HKEY, subkey: &str, value: &str) -> Option<u32> {
     (status == ERROR_SUCCESS).then_some(data)
 }
 
+/// An integer stored as REG_QWORD (8 bytes), or as REG_DWORD or REG_BINARY of 4 or 8
+/// bytes, read little endian.
+pub(super) fn read_u64(root: HKEY, subkey: &str, value: &str) -> Option<u64> {
+    let subkey = to_wide(subkey);
+    let value = to_wide(value);
+    let mut data = [0u8; size_of::<u64>()];
+    let mut size = data.len() as u32;
+    let mut kind: REG_VALUE_TYPE = 0;
+    // SAFETY: `data` is a writable 8-byte buffer, `size` gives its length and `kind` is a
+    // valid out-parameter.
+    let status = unsafe {
+        RegGetValueW(
+            root,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_QWORD | RRF_RT_REG_DWORD | RRF_RT_REG_BINARY,
+            &mut kind,
+            data.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let len = size as usize;
+    let valid = match kind {
+        REG_QWORD => len == size_of::<u64>(),
+        REG_DWORD => len == size_of::<u32>(),
+        REG_BINARY => len == size_of::<u32>() || len == size_of::<u64>(),
+        _ => false,
+    };
+    valid.then(|| {
+        let mut bytes = [0u8; size_of::<u64>()];
+        bytes[..len].copy_from_slice(&data[..len]);
+        u64::from_le_bytes(bytes)
+    })
+}
+
 /// Names of the direct subkeys of a key. Empty when the key cannot be opened.
 pub(super) fn subkeys(root: HKEY, subkey: &str) -> Vec<String> {
     let Some(key) = Key::open(root, subkey) else {
@@ -132,5 +171,24 @@ impl Drop for Key {
     fn drop(&mut self) {
         // SAFETY: the handle came from a successful RegOpenKeyExW and is closed only here.
         unsafe { RegCloseKey(self.0) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+
+    use super::*;
+
+    #[test]
+    fn missing_u64_value_is_none() {
+        assert_eq!(
+            read_u64(
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\AtlasfetchTest\Missing",
+                "qwMemorySize"
+            ),
+            None
+        );
     }
 }

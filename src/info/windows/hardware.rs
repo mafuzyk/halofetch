@@ -10,7 +10,7 @@ use windows_sys::Win32::System::Threading::{
     GetActiveProcessorCount, GetSystemTimes, ALL_PROCESSOR_GROUPS,
 };
 
-use super::registry::{read_string, read_u32, subkeys};
+use super::registry::{read_string, read_u32, read_u64, subkeys};
 use super::to_wide;
 use crate::info::{clean_cpu_model, env_value, format_cpu, Usage};
 
@@ -162,8 +162,7 @@ fn is_virtual_adapter(name: &str) -> bool {
 fn gpu_list(names: impl IntoIterator<Item = String>) -> Option<String> {
     let mut unique: Vec<String> = Vec::new();
     for name in names {
-        let name = name.replace("(R)", "").replace("(TM)", "");
-        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        let name = clean_adapter_name(&name);
         if name.is_empty()
             || GENERIC_ADAPTERS.contains(&name.as_str())
             || is_virtual_adapter(&name)
@@ -174,6 +173,46 @@ fn gpu_list(names: impl IntoIterator<Item = String>) -> Option<String> {
         unique.push(name);
     }
     (!unique.is_empty()).then(|| unique.join(", "))
+}
+
+/// The adapter description without the trademark marks and with single spaces.
+fn clean_adapter_name(description: &str) -> String {
+    let name = description.replace("(R)", "").replace("(TM)", "");
+    name.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Video memory of the largest dedicated display adapter, in bytes.
+pub(super) fn vram_total() -> Option<u64> {
+    let adapters = subkeys(HKEY_LOCAL_MACHINE, DISPLAY_CLASS)
+        .into_iter()
+        .filter(|name| is_adapter_key(name))
+        .map(|name| {
+            let key = format!("{DISPLAY_CLASS}\\{name}");
+            let description = read_string(HKEY_LOCAL_MACHINE, &key, "DriverDesc");
+            let memory = read_u64(HKEY_LOCAL_MACHINE, &key, "HardwareInformation.qwMemorySize")
+                .or_else(|| read_u64(HKEY_LOCAL_MACHINE, &key, "HardwareInformation.MemorySize"));
+            (description, memory)
+        });
+    largest_vram(adapters)
+}
+
+/// Largest non-zero memory size among the adapters that have a description and are
+/// neither generic nor virtual.
+fn largest_vram(adapters: impl IntoIterator<Item = (Option<String>, Option<u64>)>) -> Option<u64> {
+    adapters
+        .into_iter()
+        .filter_map(|(description, memory)| {
+            let name = clean_adapter_name(&description?);
+            if name.is_empty()
+                || GENERIC_ADAPTERS.contains(&name.as_str())
+                || is_virtual_adapter(&name)
+            {
+                return None;
+            }
+            memory
+        })
+        .filter(|bytes| *bytes > 0)
+        .max()
 }
 
 #[cfg(test)]
@@ -265,7 +304,39 @@ mod tests {
     }
 
     #[test]
+    fn largest_vram_skips_missing_generic_virtual_and_empty_adapters() {
+        const GIB: u64 = 1 << 30;
+        let adapters = [
+            (
+                Some("Microsoft Basic Display Adapter".to_string()),
+                Some(16 * GIB),
+            ),
+            (
+                Some("Virtual Display Driver by MTT".to_string()),
+                Some(32 * GIB),
+            ),
+            (None, Some(24 * GIB)),
+            (Some("Intel(R) UHD Graphics 630".to_string()), Some(GIB)),
+            (Some("NVIDIA GeForce RTX 4070".to_string()), Some(12 * GIB)),
+            (Some("NVIDIA GeForce GTX 1050".to_string()), Some(0)),
+            (Some("AMD Radeon Graphics".to_string()), None),
+        ];
+        assert_eq!(largest_vram(adapters), Some(12 * GIB));
+        assert_eq!(
+            largest_vram([(Some("NVIDIA GeForce GTX 1050".to_string()), Some(0))]),
+            None
+        );
+    }
+
+    #[test]
     fn calls_do_not_panic() {
-        let _ = (cpu(), memory(), disk(), gpu_name(), cpu_totals());
+        let _ = (
+            cpu(),
+            memory(),
+            disk(),
+            gpu_name(),
+            vram_total(),
+            cpu_totals(),
+        );
     }
 }

@@ -12,7 +12,10 @@ mod system;
 
 use crate::field::Field;
 
-use super::{format_bytes_pair, format_percent, format_uptime, put, Battery, CpuSampler, SysInfo};
+use super::{
+    format_bytes, format_bytes_pair, format_percent, format_uptime, put, Battery, CpuSampler,
+    SysInfo,
+};
 
 pub(super) use hardware::cpu_totals;
 
@@ -51,6 +54,7 @@ pub(super) fn collect(info: &mut SysInfo) {
         info.gauges.battery = battery.as_ref().map(|battery| battery.level);
         put(info, Field::Battery, battery.as_ref().map(Battery::text));
         put(info, Field::Gpu, hardware::gpu_name());
+        put(info, Field::Vram, hardware::vram_total().map(format_bytes));
         put(info, Field::Resolution, desktop::resolution());
         put(info, Field::LocalIp, network::local_ip());
         put(info, Field::Wm, Some(DESKTOP_WINDOW_MANAGER));

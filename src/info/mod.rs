@@ -283,6 +283,24 @@ pub fn refresh_live(info: &mut SysInfo, sampler: &mut CpuSampler) {
 
 /// `"6.21 / 30.6 GiB (20%)"`. The unit is picked from the total and printed once.
 pub fn format_bytes_pair(usage: Usage) -> String {
+    let (unit, label) = byte_unit(usage.total);
+    format!(
+        "{} / {} {label} ({:.0}%)",
+        scaled(usage.used, unit),
+        scaled(usage.total, unit),
+        usage.ratio() * 100.0
+    )
+}
+
+/// `"2.00 GiB"`. The unit is picked from the value itself.
+#[cfg(any(windows, test))]
+pub(super) fn format_bytes(bytes: u64) -> String {
+    let (unit, label) = byte_unit(bytes);
+    format!("{} {label}", scaled(bytes, unit))
+}
+
+/// The largest unit that does not exceed `bytes`, bytes when none does.
+fn byte_unit(bytes: u64) -> (u64, &'static str) {
     const UNITS: [(u64, &str); 5] = [
         (TIB, "TiB"),
         (GIB, "GiB"),
@@ -290,17 +308,11 @@ pub fn format_bytes_pair(usage: Usage) -> String {
         (KIB, "KiB"),
         (1, "B"),
     ];
-    let (unit, label) = UNITS
+    UNITS
         .iter()
         .copied()
-        .find(|(size, _)| usage.total >= *size)
-        .unwrap_or((1, "B"));
-    format!(
-        "{} / {} {label} ({:.0}%)",
-        scaled(usage.used, unit),
-        scaled(usage.total, unit),
-        usage.ratio() * 100.0
-    )
+        .find(|(size, _)| bytes >= *size)
+        .unwrap_or((1, "B"))
 }
 
 /// Expresses `bytes` in `unit` with 2 decimals below 10, 1 below 100 and none above.
@@ -507,6 +519,13 @@ mod tests {
         assert_eq!(format_bytes_pair(disk), "0.00 / 1.82 TiB (0%)");
         let zero = Usage { used: 0, total: 0 };
         assert_eq!(format_bytes_pair(zero), "0.00 / 0.00 B (0%)");
+    }
+
+    #[test]
+    fn format_bytes_picks_unit_from_value() {
+        assert_eq!(format_bytes(2 * GIB), "2.00 GiB");
+        assert_eq!(format_bytes(12 * GIB), "12.0 GiB");
+        assert_eq!(format_bytes(0), "0.00 B");
     }
 
     #[test]
