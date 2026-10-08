@@ -218,10 +218,18 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn repository_root_is_detected_as_source() {
-        assert!(is_source_dir(std::path::Path::new(env!(
-            "CARGO_MANIFEST_DIR"
-        ))));
+    fn checkout_layout_is_detected_as_source() {
+        // Built in a scratch directory: a release tarball or a Nix build has no `.git`.
+        let root = std::env::temp_dir().join(format!("halofetch-source-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+        assert!(!is_source_dir(&root));
+
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        assert!(is_source_dir(&root));
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
