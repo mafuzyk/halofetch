@@ -95,8 +95,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
-name = "atlasfetch"
-version = "2.0.0"
+name = "halofetch"
+version = "3.0.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -110,6 +110,7 @@ dependencies = [
  "serde_json",
  "unicode-width 0.2.0",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

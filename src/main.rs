@@ -1,255 +1,457 @@
-// atlasfetch — centered ASCII art with powerline panels
-//
-// Design: The binary has two modes. The default mode prints system info
-// instantly. The `setup` subcommand launches a TUI configurator. Both share
-// the same rendering engine so the preview in setup is identical to real
-// terminal output.
-
-mod ascii;
 mod benchmark;
 mod cli;
-mod component;
 mod config;
+mod field;
 mod info;
-mod layout;
 mod live;
+mod logo;
 mod output;
 mod render;
 mod theme;
 mod tui;
 mod update;
-mod widget;
+
+use std::ffi::OsStr;
+use std::fmt::Write as _;
+use std::fs;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::Parser;
+use color_eyre::eyre::eyre;
 use color_eyre::Result;
-use std::io::IsTerminal;
+
+use cli::{Args, Command, ConfigAction, LogosAction, OutputFormat, PresetAction};
+use config::{Config, Scene, StartupMode};
+use render::scene::RenderCtx;
+use render::{Line, Span, Style};
+use theme::Color;
+
+/// Static output width when neither a terminal nor `$COLUMNS` tells us.
+const DEFAULT_WIDTH: usize = 100;
+/// Width of the palette names column in `preset list`.
+const PRESET_NAME_WIDTH: usize = 20;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
-
-    let args = cli::Args::parse();
-
-    if let Some(ref cfg_path) = args.config {
-        config::set_config_path(cfg_path.clone());
+    let args = Args::parse();
+    if let Some(path) = &args.config {
+        config::set_config_path(path.clone());
     }
-
-    if let Some(command) = args.command.as_ref() {
-        return run_command(command);
+    match &args.command {
+        Some(command) => run_command(&args, command),
+        None => run_default(&args),
     }
+}
 
-    // --list-presets: print and exit
-    if args.list_presets {
-        list_presets();
-        return Ok(());
+fn run_command(args: &Args, command: &Command) -> Result<()> {
+    match command {
+        Command::Fetch { watch: false, .. } => print_fetch(args, &Config::load()?),
+        Command::Fetch {
+            watch: true,
+            interval,
+        } => {
+            if matches!(args.format, OutputFormat::Json) {
+                return Err(eyre!("--watch cannot be combined with --format json"));
+            }
+            require_terminal("fetch --watch")?;
+            let cfg = Config::load()?;
+            let interval = interval.unwrap_or(cfg.startup.interval_ms);
+            live::watch(&cfg, scene_for(args, &cfg), Duration::from_millis(interval))
+        }
+        Command::Monitor { interval } => {
+            require_terminal("monitor")?;
+            let cfg = Config::load()?;
+            let interval = interval.unwrap_or(cfg.startup.interval_ms);
+            live::run(&cfg, interval, scene_for(args, &cfg))
+        }
+        Command::Config { action } => match action {
+            None | Some(ConfigAction::Edit) => edit_config(false),
+            Some(ConfigAction::Path) => print_config_path(),
+            Some(ConfigAction::Reset) => reset_config(),
+        },
+        Command::Preset { action } => match action {
+            PresetAction::List => list_presets(),
+            PresetAction::Apply { name } => apply_preset(name),
+        },
+        Command::Logos { action } => match action {
+            LogosAction::List => list_logos(),
+            LogosAction::Show { key } => show_logo(key.as_deref()),
+        },
+        Command::Benchmark { iterations } => {
+            let cfg = Config::load()?;
+            benchmark::run(&cfg, scene_for(args, &cfg), *iterations)
+        }
+        Command::Update => update::run(),
     }
+}
 
-    // --preset: apply and exit
-    if let Some(ref name) = args.preset {
-        return apply_preset(name);
+/// No subcommand: the legacy flags, then the startup mode. Without a configuration
+/// file in an interactive session, the setup editor runs first.
+fn run_default(args: &Args) -> Result<()> {
+    if args.setup {
+        return edit_config(false);
     }
-
-    // --update: pull, build, install
-    if args.update {
-        return update::run();
-    }
-
-    // --reset: delete config and launch setup wizard
     if args.reset {
         return reset_config();
     }
-
-    // --scene: override scene
-    if let Some(ref s) = args.scene {
-        let scene = s.parse::<component::Scene>()?;
-        ascii::ensure_logos()?;
-        let cfg = config::Config::load()?;
-        let info = info::collect()?;
-        let ascii_art = ascii::load(&cfg)?;
-        let tw = layout::terminal_width();
-        let ctx = component::RenderCtx {
-            info: &info,
-            cfg: &cfg,
-            term_width: tw,
-            palette: &cfg.logo.colors,
-        };
-        use component::Component;
-        let ascii_comp = component::ascii::AsciiComponent::new(ascii_art.clone());
-        let system_comp = component::system::SystemComponent;
-        let monitor_comp = component::monitor::MonitorComponent::new();
-        let companion_comp = component::companion::CompanionComponent;
-        let comps: Vec<&dyn Component> =
-            vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
-        print!("{}", component::render_scene_ansi(scene, &comps, &ctx));
-        return Ok(());
+    if args.list_presets {
+        return list_presets();
     }
-
-    // --just-ascii: print only the ASCII art
+    if let Some(name) = &args.preset {
+        return apply_preset(name);
+    }
+    if args.update {
+        return update::run();
+    }
     if args.just_ascii {
-        ascii::ensure_logos()?;
-        let cfg = config::Config::load()?;
-        let ascii_art = ascii::load(&cfg)?;
-        print!("{}", render::render_ascii_only(&cfg, &ascii_art));
-        return Ok(());
+        return show_logo(None);
+    }
+    if matches!(args.format, OutputFormat::Json) {
+        return print_json();
     }
 
-    // setup: launch TUI configurator
-    if args.setup {
-        return setup();
-    }
-
-    if matches!(args.format, cli::OutputFormat::Json) {
-        let info = info::collect()?;
-        println!("{}", output::system_info_json(&info)?);
-        return Ok(());
-    }
-
-    // first run: launch setup TUI
-    if !config::config_path()?.exists() {
-        let mut cfg = config::Config::load()?;
-        tui::run(&mut cfg)?;
-        cfg.save()?;
-        return Ok(());
-    }
-
-    let startup_cfg = config::Config::load()?;
-    if startup_cfg.live.enabled && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-    {
-        return live::run(startup_cfg.live.interval_ms, None);
-    }
-
-    // default: print fetch output
-    ascii::ensure_logos()?;
-    let cfg = config::Config::load()?;
-    let info = info::collect()?;
-    let ascii_art = ascii::load(&cfg)?;
-
-    let term_width = layout::terminal_width();
-    let scene = cfg.scene;
-
-    let ctx = component::RenderCtx {
-        info: &info,
-        cfg: &cfg,
-        term_width,
-        palette: &cfg.logo.colors,
+    let interactive = is_interactive();
+    let cfg = if interactive && !Config::exists() {
+        first_run_setup()?
+    } else {
+        Config::load()?
     };
-
-    let output = {
-        use component::Component;
-        let ascii_comp = component::ascii::AsciiComponent::new(ascii_art.clone());
-        let system_comp = component::system::SystemComponent;
-        let monitor_comp = component::monitor::MonitorComponent::new();
-        let companion_comp = component::companion::CompanionComponent;
-        let components: Vec<&dyn Component> =
-            vec![&ascii_comp, &system_comp, &monitor_comp, &companion_comp];
-        component::render_scene_ansi(scene, &components, &ctx)
-    };
-
-    print!("{}", output);
-    Ok(())
+    if interactive && cfg.startup.mode == StartupMode::Monitor {
+        return live::run(&cfg, cfg.startup.interval_ms, scene_for(args, &cfg));
+    }
+    print_static(&cfg, scene_for(args, &cfg))
 }
 
-fn run_command(command: &cli::Command) -> Result<()> {
-    match command {
-        cli::Command::Fetch => render_static_fetch(),
-        cli::Command::Config { action: None } => setup(),
-        cli::Command::Config {
-            action: Some(cli::ConfigAction::Path),
-        } => {
-            println!("{}", config::config_path()?.display());
-            Ok(())
+fn scene_for(args: &Args, cfg: &Config) -> Scene {
+    args.scene.unwrap_or(cfg.scene)
+}
+
+fn is_interactive() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn require_terminal(what: &str) -> Result<()> {
+    if is_interactive() {
+        Ok(())
+    } else {
+        Err(eyre!(
+            "{what} needs an interactive terminal (stdin and stdout must be a TTY)"
+        ))
+    }
+}
+
+/// Runs the editor for a configuration that does not exist yet. Declining to save
+/// keeps the defaults.
+fn first_run_setup() -> Result<Config> {
+    match tui::run(Config::load()?, true)? {
+        Some(saved) => {
+            saved.save()?;
+            Ok(saved)
         }
-        cli::Command::Config {
-            action: Some(cli::ConfigAction::Reset),
-        } => reset_config(),
-        cli::Command::Preset {
-            action: cli::PresetAction::List,
-        } => {
-            list_presets();
-            Ok(())
-        }
-        cli::Command::Preset {
-            action: cli::PresetAction::Apply { name },
-        } => apply_preset(name),
-        cli::Command::Logos {
-            action: cli::LogosAction::List,
-        } => {
-            for logo in ascii::available_logos()? {
-                println!("{logo}");
+        None => Config::load(),
+    }
+}
+
+fn print_fetch(args: &Args, cfg: &Config) -> Result<()> {
+    match args.format {
+        OutputFormat::Json => print_json(),
+        OutputFormat::Ansi => print_static(cfg, scene_for(args, cfg)),
+    }
+}
+
+fn print_static(cfg: &Config, scene: Scene) -> Result<()> {
+    let lines = render_static(cfg, scene, static_width());
+    let text = if plain_output() {
+        render::to_plain(&lines)
+    } else {
+        render::to_ansi(&lines)
+    };
+    emit(&text)
+}
+
+/// The static fetch: detect the system, pick the logo that fits, lay out the scene.
+fn render_static(cfg: &Config, scene: Scene, width: usize) -> Vec<Line> {
+    let system = info::collect();
+    let logos = cfg.logo_set(&system);
+    let ctx = RenderCtx {
+        info: &system,
+        cfg,
+        logos: &logos,
+        width,
+    };
+    render::scene::render(scene, &ctx)
+}
+
+fn print_json() -> Result<()> {
+    let system = info::collect();
+    emit(&format!("{}\n", output::system_info_json(&system)?))
+}
+
+fn static_width() -> usize {
+    if io::stdout().is_terminal() {
+        if let Ok((columns, _)) = crossterm::terminal::size() {
+            if columns > 0 {
+                return usize::from(columns);
             }
-            Ok(())
         }
-        cli::Command::Update => update::run(),
-        cli::Command::Benchmark { iterations } => benchmark::run(*iterations),
-        cli::Command::Monitor { interval, scene } => live::run(*interval, scene.as_deref()),
+    }
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|&columns| columns > 0)
+        .unwrap_or(DEFAULT_WIDTH)
+}
+
+/// Plain text where the console cannot show ANSI escapes, and wherever `NO_COLOR` is set to
+/// a non-empty value, terminal or not.
+fn plain_output() -> bool {
+    plain_output_for(ansi_supported(), std::env::var_os("NO_COLOR").as_deref())
+}
+
+/// The plain-text rule. Pure, so it is tested without changing the environment.
+fn plain_output_for(ansi_supported: bool, no_color: Option<&OsStr>) -> bool {
+    !ansi_supported || no_color.is_some_and(|value| !value.is_empty())
+}
+
+/// Legacy Windows consoles show escapes as garbage until virtual terminal processing is
+/// on. crossterm turns it on here and caches the answer.
+#[cfg(windows)]
+fn ansi_supported() -> bool {
+    crossterm::ansi_support::supports_ansi()
+}
+
+#[cfg(not(windows))]
+fn ansi_supported() -> bool {
+    true
+}
+
+/// Rendered lines for the terminal: ANSI, or plain text where `plain_output` says so.
+pub(crate) fn styled_text(lines: &[Line]) -> String {
+    if plain_output() {
+        render::to_plain(lines)
+    } else {
+        render::to_ansi(lines)
     }
 }
 
-fn render_static_fetch() -> Result<()> {
-    ascii::ensure_logos()?;
-    let cfg = config::Config::load()?;
-    let system_info = info::collect()?;
-    let ascii_art = ascii::load(&cfg)?;
-    let ctx = component::RenderCtx {
-        info: &system_info,
-        cfg: &cfg,
-        term_width: layout::terminal_width(),
-        palette: &cfg.logo.colors,
-    };
-    use component::Component;
-    let ascii_component = component::ascii::AsciiComponent::new(ascii_art);
-    let system_component = component::system::SystemComponent;
-    let monitor_component = component::monitor::MonitorComponent::new();
-    let companion_component = component::companion::CompanionComponent;
-    let components: Vec<&dyn Component> = vec![
-        &ascii_component,
-        &system_component,
-        &monitor_component,
-        &companion_component,
-    ];
-    print!(
-        "{}",
-        component::render_scene_ansi(cfg.scene, &components, &ctx)
-    );
-    Ok(())
-}
-
-fn list_presets() {
-    println!("Available presets:");
-    for preset in theme::all_themes() {
-        let swatch: String = preset
-            .colors
-            .iter()
-            .map(|color| format!("\x1b[48;2;{};{};{}m  \x1b[0m", color.r, color.g, color.b))
-            .collect();
-        println!("  {:20} {}", preset.name, swatch);
+/// Writes `text` to stdout. A closed pipe, as in `halofetch logos list | head`, is
+/// not an error.
+fn emit(text: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    match stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
-fn apply_preset(name: &str) -> Result<()> {
-    let preset = theme::all_themes()
-        .into_iter()
-        .find(|preset| preset.name == name)
-        .ok_or_else(|| {
-            color_eyre::eyre::eyre!("preset '{name}' not found; use 'atlasfetch preset list'")
-        })?;
-    let mut cfg = config::Config::load()?;
-    cfg.logo.colors = preset.colors;
-    cfg.save()?;
-    println!("Preset \"{name}\" applied.");
+fn edit_config(first_run: bool) -> Result<()> {
+    require_terminal("the configuration editor")?;
+    let cfg = Config::load()?;
+    if let Some(saved) = tui::run(cfg, first_run)? {
+        saved.save()?;
+    }
     Ok(())
 }
 
-fn setup() -> Result<()> {
-    let mut cfg = config::Config::load()?;
-    tui::run(&mut cfg)?;
-    cfg.save()
+fn print_config_path() -> Result<()> {
+    emit(&format!("{}\n", config::config_path()?.display()))
 }
 
 fn reset_config() -> Result<()> {
+    require_terminal("config reset")?;
     let path = config::config_path()?;
     if path.exists() {
-        std::fs::remove_file(&path)?;
-        println!("Config removed.");
+        emit(&format!(
+            "Reset configuration at {}? [y/N] ",
+            path.display()
+        ))?;
+        if !read_yes()? {
+            return emit("Reset cancelled.\n");
+        }
+        let backup = backup_path(&path, |candidate| candidate.exists());
+        fs::rename(&path, &backup)?;
+        emit(&format!(
+            "Previous configuration moved to {}\n",
+            backup.display()
+        ))?;
     }
-    setup()
+    edit_config(true)
+}
+
+fn read_yes() -> Result<bool> {
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// `path.bak`, or `path.bak.N` for the first free N, so older backups are kept.
+fn backup_path(path: &Path, exists: impl Fn(&Path) -> bool) -> PathBuf {
+    let base = with_suffix(path, "bak");
+    if !exists(&base) {
+        return base;
+    }
+    (1..)
+        .map(|n| with_suffix(path, &format!("bak.{n}")))
+        .find(|candidate| !exists(candidate))
+        .unwrap_or(base)
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".");
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+fn list_presets() -> Result<()> {
+    let cfg = Config::load()?;
+    let mut out = String::from("Available presets:\n");
+    for preset in theme::all_themes() {
+        writeln!(
+            out,
+            "  {}  {}",
+            padded(preset.name, PRESET_NAME_WIDTH),
+            swatch(&preset.colors)
+        )?;
+    }
+    if !cfg.custom_palettes.is_empty() {
+        out.push_str("Custom palettes:\n");
+        for (name, colors) in &cfg.custom_palettes {
+            writeln!(
+                out,
+                "  {}  {}",
+                padded(name, PRESET_NAME_WIDTH),
+                swatch(colors)
+            )?;
+        }
+    }
+    emit(&out)
+}
+
+/// One block of color per palette entry, drawn with the shared canvas.
+fn swatch(colors: &[Color]) -> String {
+    let spans = colors
+        .iter()
+        .map(|&color| Span::new("  ", Style::new().bg(color)))
+        .collect();
+    let line = Line::from_spans(spans);
+    // The colors are the content here, so `NO_COLOR` does not blank them.
+    let text = if ansi_supported() {
+        render::to_ansi(&[line])
+    } else {
+        render::to_plain(&[line])
+    };
+    text.trim_end().to_string()
+}
+
+fn padded(text: &str, width: usize) -> String {
+    let gap = width.saturating_sub(render::text_width(text));
+    format!("{text}{}", " ".repeat(gap))
+}
+
+fn apply_preset(name: &str) -> Result<()> {
+    let mut cfg = Config::load()?;
+    let colors = match theme::find_theme(name) {
+        Some(theme) => theme.colors,
+        None => cfg
+            .custom_palettes
+            .get(name)
+            .cloned()
+            .ok_or_else(|| eyre!("preset '{name}' not found; use 'halofetch preset list'"))?,
+    };
+    cfg.colors.palette = colors;
+    cfg.save()?;
+    emit(&format!("Preset \"{name}\" applied.\n"))
+}
+
+fn list_logos() -> Result<()> {
+    let keys = logo::available(config::user_logo_dir().as_deref());
+    let mut out = String::new();
+    for key in keys {
+        out.push_str(&key);
+        out.push('\n');
+    }
+    emit(&out)
+}
+
+/// `key` names an embedded or user logo. Without a key, the logo the configuration
+/// selects for this machine is shown.
+fn show_logo(key: Option<&str>) -> Result<()> {
+    let cfg = Config::load()?;
+    let shown = match key {
+        Some(key) => logo::load_key(key, config::user_logo_dir().as_deref())
+            .ok_or_else(|| eyre!("logo '{key}' not found; use 'halofetch logos list'"))?,
+        None => {
+            let system = info::collect();
+            let logos = cfg.logo_set(&system);
+            logos
+                .fitting(usize::MAX)
+                .cloned()
+                .ok_or_else(|| eyre!("the configured logo source has no logo"))?
+        }
+    };
+    let lines = logo::colorize(&shown, &cfg.colors.palette, cfg.logo.gradient);
+    emit(&styled_text(&lines))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_takes_the_first_free_name() {
+        let path = Path::new("/home/u/.config/halofetch/config.json");
+        let free = backup_path(path, |_| false);
+        assert_eq!(free, Path::new("/home/u/.config/halofetch/config.json.bak"));
+
+        let taken = |candidate: &Path| {
+            candidate.ends_with("config.json.bak") || candidate.ends_with("config.json.bak.1")
+        };
+        let third = backup_path(path, taken);
+        assert_eq!(
+            third,
+            Path::new("/home/u/.config/halofetch/config.json.bak.2")
+        );
+    }
+
+    #[test]
+    fn padding_uses_display_width() {
+        assert_eq!(padded("abc", 5), "abc  ");
+        assert_eq!(padded("abcdef", 3), "abcdef");
+    }
+
+    #[test]
+    fn swatch_has_one_block_per_color() {
+        let colors = [Color::new(1, 2, 3), Color::new(4, 5, 6)];
+        let text = swatch(&colors);
+        assert!(text.contains("\x1b[48;2;1;2;3m"));
+        assert!(text.contains("\x1b[48;2;4;5;6m"));
+        assert!(!text.ends_with('\n'));
+    }
+
+    #[test]
+    fn unset_or_empty_no_color_keeps_colors() {
+        assert!(!plain_output_for(true, None));
+        assert!(!plain_output_for(true, Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn no_color_turns_colors_off_on_a_terminal() {
+        assert!(plain_output_for(true, Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn consoles_without_ansi_are_always_plain() {
+        assert!(plain_output_for(false, None));
+        assert!(plain_output_for(false, Some(OsStr::new(""))));
+    }
 }

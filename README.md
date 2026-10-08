@@ -1,217 +1,324 @@
 <div align="center">
 
-# AtlasFetch
+# HaloFetch
 
 ### Your Linux, composed — not dumped.
 
 A fast system fetch, a live hardware monitor, and a real interactive shell<br>
 sharing one carefully arranged terminal canvas.
 
-[![CI](https://github.com/mafuzyk/atlasfetch/actions/workflows/ci.yml/badge.svg)](https://github.com/mafuzyk/atlasfetch/actions/workflows/ci.yml)
-[![Release](https://github.com/mafuzyk/atlasfetch/actions/workflows/release.yml/badge.svg)](https://github.com/mafuzyk/atlasfetch/actions/workflows/release.yml)
+[![CI](https://github.com/mafuzyk/halofetch/actions/workflows/ci.yml/badge.svg)](https://github.com/mafuzyk/halofetch/actions/workflows/ci.yml)
+[![Release](https://github.com/mafuzyk/halofetch/actions/workflows/release.yml/badge.svg)](https://github.com/mafuzyk/halofetch/actions/workflows/release.yml)
 [![Rust](https://img.shields.io/badge/Rust-2021-e86b37?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-8b5cf6)](LICENSE)
 
 [Quick start](#quick-start) · [Choose a mode](#choose-a-mode) · [Customize](#make-it-yours) · [Install](#installation) · [Contribute](#development)
 
-<img src="assets/fetch.png" alt="AtlasFetch centered scene" width="820">
-
 </div>
 
-AtlasFetch treats terminal output like a layout instead of a list. Its default scenes balance a colored ASCII logo with the information you actually care about; its optional live workspace keeps that composition above a PTY-backed shell you can genuinely use.
+HaloFetch treats terminal output like a layout instead of a list. Its scenes place a colored ASCII logo next to the information you care about; its live monitor keeps that composition above a PTY-backed shell you can use normally.
 
-It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. If it is Linux and it has a terminal, AtlasFetch should feel at home.
+It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. Linux is the primary target. Windows 10 and 11 are supported as well, see [Windows](#windows).
 
-## Why AtlasFetch?
+**Renamed from atlasfetch.** The command is now `halofetch`. On the first run the configuration directory moves automatically from `atlasfetch` to `halofetch` (`~/.config/atlasfetch` or `%APPDATA%\atlasfetch`), unless `--config` is given. `ATLASFETCH_SRC` still works as a fallback for `HALOFETCH_SRC`.
 
-- **One command, two personalities.** Print once and exit, or stay as a live monitor with a shell underneath.
-- **Designed, not hard-coded.** Four responsive scenes share one component system and Unicode-aware layout engine.
-- **Personal without becoming homework.** The TUI edits themes, panels, fields, labels, icons, spacing, and ASCII with a real preview.
-- **534 embedded logos.** Full and compact distro variants ship inside the binary; custom text art is welcome too.
-- **Useful data, honest fallbacks.** CPU, GPU, memory, disks, sensors, packages, desktop state, network details, and more—without inventing values when a sensor is unavailable.
-- **Safe configuration.** Versioned JSON, validation, migration from older formats, atomic writes, and preservation of invalid files.
-- **Built for automation too.** Static output, isolated config profiles, versioned JSON, deterministic scene tests, and an integrated benchmark.
-- **No mobile afterthought.** AtlasFetch intentionally targets Linux desktops and terminals, keeping its interface coherent.
+## Why HaloFetch?
+
+- **Two modes.** Print one fetch and exit, or stay as a live monitor with a shell underneath.
+- **Three scenes, one renderer.** `classic`, `side` and `dashboard` share the same rows, gauges and fallbacks. The editor preview uses the same code as the output.
+- **Editable without JSON.** The setup editor changes palettes, logo, fields, labels, icons, spacing and startup mode, with a live preview.
+- **456 embedded logos.** 78 of them have a compact variant for narrow terminals. Custom logos can be pasted in or read from a file.
+- **32 fields, no invented values.** CPU, GPU, memory, disk, sensors, battery, packages, desktop, network and more. A value that cannot be read is hidden, or shown as `n/a` when you ask for that.
+- **Safe configuration.** Versioned configuration (version 3), validation before saving, atomic writes, automatic migration from versions 1 and 2 with a backup, and invalid files moved aside instead of deleted.
+- **Scriptable.** Static output, separate configuration profiles with `--config`, versioned JSON output and a built-in benchmark.
 
 ## Choose a mode
 
 ### 1. Fetch and leave
 
 ```bash
-atlasfetch fetch
+halofetch fetch
 ```
 
-One composition, zero ceremony. Ideal for terminal greetings, screenshots, dotfiles, and that completely legitimate need to show everyone your kernel version.
+Renders one fetch and exits. Use it for terminal greetings, screenshots, dotfiles, or showing everyone your kernel version.
 
-| Scene | Personality |
-|---|---|
-| `classic` | The AtlasFetch signature: centered logo, information on both sides |
-| `dashboard` | Denser blocks for people who want more signal per row |
-| `cockpit` | Logo, system data, and live-oriented components in one instrument panel |
-| `classicfetch` | Familiar Fastfetch-style composition: logo left, information right |
+| Scene | Also accepted as | Shape |
+|---|---|---|
+| `classic` | | Logo centered between two information panels |
+| `side` | `classicfetch`, `fastfetch` | Logo on the left, information on the right |
+| `dashboard` | `cockpit` | Framed boxes: logo and System, then Resources with gauges |
 
 Try a scene without changing your configuration:
 
 ```bash
-atlasfetch --scene classicfetch
-atlasfetch --scene cockpit
+halofetch fetch --scene side
+halofetch --scene dashboard
 ```
 
-### 2. Stay in the cockpit
+`halofetch --scene dashboard` prints once and exits. To keep a scene on screen, use `halofetch fetch --watch` (`-w`): it redraws the scene in place every `startup.interval_ms` (1000 ms by default) until `q`, `Esc` or `Ctrl+C`. `-i` or `--interval` sets another interval, from 100 to 60000 ms. `halofetch monitor` adds the embedded shell below the scene.
 
-```bash
-atlasfetch monitor
-```
+The scenes adapt to the width of the terminal:
 
-The upper canvas refreshes CPU, RAM, GPU, temperature, disk, load, processes, and uptime. The lower canvas is a real interactive shell connected through a PTY and rendered as VT100—not a fake command box.
+- `classic` shares the room beside the logo between the two panels. When a panel would have to cut its values below 10 columns, the logo, title and every row stack into one centered column.
+- `side` places the logo above the information when the logo and at least 30 columns of information do not fit side by side.
+- `dashboard` places the logo box above the System box when there is no room beside it. The System box uses two columns when it is wide enough, and the Resources box uses two columns from an inner width of 70.
+
+Static output is 100 columns wide unless the terminal says otherwise. `COLUMNS` sets the width when output is not a terminal.
 
 ```text
-┌─ AtlasFetch · live 1000ms ───────────────────────────────┐
-│                scene + live system metrics               │
-├──────────────────────────────────────────────────────────┤
-│ Shell · your prompt, commands, completion and programs   │
-└──────────────────────────────────────────────────────────┘
+                               ....             root@vm
+                .',:clooo:  .:looooo:.          ───────
+             .;looooooooc  .oooooooooo'           OS        Ubuntu 24.04.5 LTS
+          .;looooool:,''.  :ooooooooooc           Kernel    6.18.44-fc-v77
+         ;looool;.         'oooooooooo,           Packages  827 (dpkg)
+        ;clool'             .cooooooc.  ,,        Shell     bash
+           ...                ......  .:oo,       Terminal  Linux console
+    .;clol:,.                        .loooo'      Uptime    59m
+   :ooooooooo,                        'ooool      CPU       Intel Xeon (4)
+  'ooooooooooo.                        loooo.     Memory    0.60 / 15.7 GiB (4%)
+  'ooooooooool                         coooo.     Disk      10.7 / 252 GiB (4%)
+   ,loooooooc.                        .loooo.
+     .,;;;'.                          ;ooooc    ███████████████
+         ...                         ,ooool.
+      .cooooc.              ..',,'.  .cooo.
+        ;ooooo:.           ;oooooooc.  :l.
+         .coooooc,..      coooooooooo.
+           .:ooooooolc:. .ooooooooooo'
+             .':loooooo;  ,oooooooooc
+                 ..';::c'  .;loooo:'
 ```
 
-- Type commands normally; completion, history, `sudo`, SSH, editors, and control keys are forwarded to the child shell.
-- `Ctrl+Q` closes the entire workspace. `Ctrl+C`, `Ctrl+D`, `Esc`, and the usual navigation keys belong to the shell.
-- Fish configuration is preserved, while redundant startup fetches and unsupported terminal probes are skipped inside the workspace.
-- Metrics redraw only when data changes; AtlasFetch does not repaint at full speed while idle.
-- In a pipe or non-interactive session, AtlasFetch automatically falls back to static output.
+The sample is `halofetch fetch --scene side` with `NO_COLOR=1`. Nerd Font icons and powerline separators may show as blanks in a font without them.
 
-Enable **Monitor Mode** in Setup and plain `atlasfetch` will open this workspace by default. `atlasfetch fetch` always remains the escape hatch for one static render.
+### 2. Live monitor
 
-<div align="center">
-<img src="assets/summary.png" alt="AtlasFetch summary view" width="48%">
-<img src="assets/panels.png" alt="AtlasFetch configurable panels" width="48%">
-</div>
+```bash
+halofetch monitor
+```
+
+The upper region shows the scene and refreshes its values at the configured interval. The lower region is a real shell in a pseudo-terminal, drawn through a VT100 parser.
+
+```text
+╭─ HaloFetch · live 1000ms ─────────────────────────────╮
+│ scene with live values, at most 60% of the screen      │
+╰────────────────────────────────────────────────────────╯
+╭─ Shell · Ctrl+Q closes workspace ──────────────────────╮
+│ $                                                      │
+╰────────────────────────────────────────────────────────╯
+```
+
+- Keys go to the shell, including completion, history, `sudo`, SSH, editors and control keys. The only key the workspace keeps is `Ctrl+Q`, which closes it.
+- The shell is `$SHELL -i`. Fish starts without its greeting and without its terminal query. On Windows the shell is PowerShell or cmd unless `$SHELL` names a file; see [Windows](#windows).
+- Values refreshed in place: uptime, load, process count, memory, swap, disk, battery, CPU temperature, backlight, CPU usage and GPU usage. Package, font and desktop detection is not repeated. Which of these exist on Windows is listed in [Windows](#windows).
+- The screen is redrawn after each refresh and whenever the shell prints something, not in a tight loop.
+- `halofetch monitor -i 500` refreshes every 500 ms. The interval can be 100 to 60000 ms.
+- Monitor needs an interactive terminal. In a pipe, use `fetch`.
+
+Set **Startup → Mode** to *monitor* in the editor and a plain `halofetch` opens this workspace in an interactive terminal. `halofetch fetch` always prints one static fetch.
 
 ## Quick start
 
 ```bash
-atlasfetch
+halofetch
 ```
 
-The first launch opens Setup and creates `~/.config/atlasfetch/config.json`. Return to the editor whenever you like:
+In an interactive terminal without a configuration file, this opens the setup editor. Saving creates `~/.config/halofetch/config.json`. Quitting without saving keeps the defaults and writes nothing. Return to the editor whenever you like:
 
 ```bash
-atlasfetch --setup
-# or
-atlasfetch config
+halofetch config
 ```
 
-The editor is organized around five questions:
+The editor has five sections:
 
-1. **Theme** — which colors feel like your desktop?
-2. **Mode** — which scene, spacing, and startup behavior do you want?
-3. **Panels** — which facts deserve space, and where?
-4. **ASCII** — which embedded or custom logo represents the machine?
-5. **Save** — does the preview look right?
+1. **Appearance**: theme and palette, gradient, info style, title, separator and value colors, and saving the palette under a name.
+2. **Logo**: source (automatic, a built-in logo, a file, or none), the compact variant for narrow terminals, and the file path. Type to filter the built-in logos.
+3. **Fields**: the left and right panels. Show or hide entries, reorder them, move them between panels, edit labels, icons and bars, add or remove fields.
+4. **Layout**: scene, gap, padding, cascade, maximum value width, hiding empty fields, color blocks, the title and its format and separator.
+5. **Startup**: the startup mode (fetch or monitor) and the refresh interval.
 
-It adapts between side-by-side and stacked layouts. Terminals below 52 × 16 receive a useful resize message instead of abstract ANSI wreckage.
+The default `cascade` is `0`, which keeps the rows of the classic scene in a straight column. Values from 1 to 10 step the rows inward. A configuration saved before this default keeps its own value.
 
-<img src="assets/narrow.png" alt="AtlasFetch narrow responsive editor" width="620">
+The editor needs a terminal of at least 60 × 18. Smaller windows show a resize message, and `q` still quits. From 110 columns, the menu, the settings and the preview sit side by side. Narrower terminals show the preview below the settings.
 
-Essential controls:
+Keys:
 
 | Key | Action |
 |---|---|
-| `Tab` / `Shift+Tab` | Move between editor sections |
-| Arrow keys | Navigate the current section |
-| `m` | Toggle persistent Monitor Mode from the Mode tab |
-| `Ctrl+S` | Save and exit from anywhere |
-| `?` | Open the complete keyboard guide |
-| `q` / `Esc` | Exit, with a save/discard prompt when needed |
+| `↑` `↓` | Move between sections in the menu, or between rows in a section |
+| `→` `Enter` `Tab` | Open the selected section |
+| `Esc` `Tab` | Return to the section menu |
+| `←` `→` | Change a choice or a number |
+| `Enter` | Edit a text value, open a list, or activate a row |
+| `Space` | Toggle a switch; in Fields, show or hide the selected entry |
+| `Shift` + `↑` `↓` | Move the selected field within its panel, or across the edge into the other panel |
+| `Shift` + `←` `→` | Move the selected field to the left or right panel |
+| `a` or `Insert` (Fields) | Add a field after the selected one |
+| `Delete` or `Backspace` (Fields) | Remove the selected field |
+| `Ctrl+Z` | Restore the last removed field |
+| paste (several lines, Logo section) | Use the pasted art as the logo |
+| `F1` or `?` | Keys help |
+| `F2` | Full-screen preview; any key returns |
+| `Ctrl+S` | Save and exit; the configuration is checked first |
+| `q` | Quit. With unsaved changes, a prompt offers Save, Discard or Cancel |
+| `Ctrl+C` | Quit without saving, no prompt |
 
 ## Make it yours
 
 ### Fields and panels
 
-AtlasFetch ships fields for OS, host, user, kernel, uptime, packages, shell, terminal, CPU, GPU, memory, disk, WM, DE, load, processes, local IP, resolution, font, VRAM, Flatpak, Snap, sensors, battery information, and more.
+HaloFetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Resources, Network and Power. Each entry in a panel can be shown or hidden, renamed, given another icon, drawn as a bar when its field has a gauge, and moved within or between the left and right panels. Labels are limited to 24 characters and icons to 4.
 
-Every field can be enabled, hidden, renamed, given another icon, and reordered between the left and right panels. The preview and final output use the exact same renderer, so what you approve is what you get.
+Fields such as CPU usage and GPU usage are live values. They appear only in monitor mode.
+
+When a panel is too narrow for a CPU or GPU value, the value is shortened before it is cut with an ellipsis. The CPU drops its clock frequency first, then its core count. The GPU drops the words Corporation, Inc. and Series.
 
 ### Themes and ASCII
 
-Choose a built-in palette, compose one from hex colors, change gradient direction, search all embedded logos, paste your own art, or run without a logo. Nerd Fonts are recommended for the default icons but are not required for the layout itself.
+Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` values separated by spaces, change the gradient direction, or save the current palette under a name. Saved palettes appear next to the built-in ones and can be applied from the command line with `halofetch preset apply NAME`. The default palette is `amethyst`.
+
+The logo can be detected from your distribution, chosen from the 456 embedded logos, read from a file, or pasted. A pasted logo is saved as `custom-logo.txt` next to the configuration when you save. A file named after a logo in `logos/` inside the configuration directory replaces the embedded logo with the same name.
+
+Nerd Fonts are recommended for the default icons. The layout works without them. When icons show as replacement glyphs, which is the usual case with the default Windows Terminal font, set `"icons": "unicode"` in the `layout` section to draw one plain symbol per field group instead, or `"icons": "none"` to draw no icons. The **Icons** row in the editor's Layout section cycles through the same three choices. Older `true` and `false` values still load as `"nerd"` and `"none"`.
 
 ### Configuration without fear
 
 The default configuration lives at:
 
 ```text
-~/.config/atlasfetch/config.json
+~/.config/halofetch/config.json
 ```
 
-AtlasFetch validates before saving and replaces the file atomically. Malformed configurations are moved aside as `.invalid` instead of being destroyed. Use another profile without touching your daily setup:
+Run `halofetch config path` to print the path in use. The configuration is validated before it is saved and written atomically. Values that are out of range in a file are limited to their range when loaded.
+
+Use another profile without touching your daily setup:
 
 ```bash
-atlasfetch --config ./screenshots.json --setup
-atlasfetch --config ./screenshots.json fetch
+halofetch -c ./screenshots.json config
+halofetch -c ./screenshots.json fetch
 ```
 
-Minimal shape of the v2 schema:
+Minimal shape of the version 3 schema. Field entries are shown as two per panel; the default file lists all of them.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "scene": "classic",
-  "live": {
-    "enabled": false,
+  "startup": {
+    "mode": "fetch",
     "interval_ms": 1000
   },
   "logo": {
-    "key": "arch",
-    "colors": [
-      { "r": 192, "g": 132, "b": 252 },
-      { "r": 99, "g": 102, "b": 241 }
-    ],
-    "color_dir": "horizontal"
+    "source": {
+      "kind": "auto"
+    },
+    "gradient": "horizontal",
+    "auto_small": true
   },
-  "display": {
+  "colors": {
+    "palette": [
+      "#C084FC",
+      "#A78BFA",
+      "#818CF8",
+      "#6366F1",
+      "#4F46E5"
+    ],
+    "title": "#FF9A98",
+    "separator": "#9D85FF",
+    "value": "#F5DCE3"
+  },
+  "title": {
+    "enabled": true,
+    "format": "{user}@{host}",
+    "separator": "─"
+  },
+  "layout": {
+    "style": "powerline",
+    "gap": 3,
+    "padding": 2,
+    "cascade": 0,
+    "icons": "nerd",
+    "max_value_width": 0,
+    "hide_empty": true,
+    "color_blocks": true
+  },
+  "fields": {
     "left": [
-      { "field": "os", "icon": "", "label": "OS", "enabled": true }
+      {
+        "field": "os",
+        "label": "OS",
+        "icon": "",
+        "enabled": true,
+        "bar": false
+      },
+      {
+        "field": "kernel",
+        "label": "Kernel",
+        "icon": "",
+        "enabled": true,
+        "bar": false
+      }
     ],
     "right": [
-      { "field": "cpu", "icon": "", "label": "CPU", "enabled": true }
+      {
+        "field": "uptime",
+        "label": "Uptime",
+        "icon": "",
+        "enabled": true,
+        "bar": false
+      },
+      {
+        "field": "cpu",
+        "label": "CPU",
+        "icon": "",
+        "enabled": true,
+        "bar": false
+      }
     ]
-  }
+  },
+  "custom_palettes": {}
 }
 ```
 
-The TUI is the recommended editor. See [DOCS.md](DOCS.md) for the complete schema, migration rules, architecture, and contributor notes.
+Older files are upgraded on first load:
+
+- A version 1 or version 2 file is migrated to version 3 and written back. The original is kept next to it as `config.json.bak`, or `config.json.bak.1`, `.bak.2` and so on when a backup already exists.
+- A file that cannot be used is moved aside as `config.json.invalid` (numbered the same way), and the defaults are used. This covers invalid JSON, an unknown version, a field key that is not a known field, and a value of the wrong type. Nothing is written back in that case.
+
+The setup editor is the recommended way to edit the file. See [DOCS.md](DOCS.md) for the complete schema, the validation ranges, the migration rules and the architecture.
 
 ## Command map
 
 | Command | What it does |
 |---|---|
-| `atlasfetch` | Follow the saved startup preference |
-| `atlasfetch fetch` | Render once and exit, ignoring Monitor Mode |
-| `atlasfetch monitor` | Force the live workspace |
-| `atlasfetch monitor -i 500` | Refresh volatile metrics every 500 ms |
-| `atlasfetch monitor --scene cockpit` | Open live mode with a one-off scene |
-| `atlasfetch config` | Open the TUI editor |
-| `atlasfetch config path` | Print the active configuration path |
-| `atlasfetch config reset` | Reset the active configuration and reopen Setup |
-| `atlasfetch preset list` | List built-in color palettes |
-| `atlasfetch preset apply dracula` | Apply a palette |
-| `atlasfetch logos list` | List embedded logo keys |
-| `atlasfetch --format json` | Emit versioned machine-readable system data |
-| `atlasfetch benchmark` | Benchmark full information collection |
-| `atlasfetch --just-ascii` | Render only the logo |
-| `atlasfetch update` | Update a clean source checkout and reinstall |
+| `halofetch` | Interactive: opens the editor on the first run, then follows the startup mode. Otherwise prints the static fetch |
+| `halofetch fetch` | Print one static fetch and exit |
+| `halofetch fetch --scene side` | Print one fetch with the given scene |
+| `halofetch --format json` | Print the detected system information as JSON |
+| `halofetch monitor` | Open the live workspace |
+| `halofetch monitor -i 500` | Open the live workspace, refreshing every 500 ms |
+| `halofetch fetch --watch` | Redraw the scene in place until `q`, `Esc` or `Ctrl+C`; `-i` sets the interval |
+| `halofetch config` | Open the setup editor (`config edit` is the same) |
+| `halofetch config path` | Print the active configuration path |
+| `halofetch config reset` | After confirmation, move the configuration aside as `.bak` and open the editor with defaults |
+| `halofetch preset list` | List built-in and custom palettes |
+| `halofetch preset apply dracula` | Use a palette for the logo colors and save |
+| `halofetch logos list` | List logo keys: embedded logos and files in the user logo directory, sorted |
+| `halofetch logos show` | Print the logo this machine's configuration selects, colored with the palette |
+| `halofetch logos show arch` | Print one logo colored with the palette |
+| `halofetch benchmark` | Measure information collection and the full render (`-n` sets the runs, 5 by default) |
+| `halofetch update` | Pull, rebuild and install from the source checkout |
 
-`atlasfetch --help` is the authoritative reference.
+`--scene`, `--format` and `-c, --config PATH` work before or after the command. `halofetch --help` is the authoritative reference.
 
 ## Installation
 
 ### Build from source
 
 ```bash
-git clone https://github.com/mafuzyk/atlasfetch.git
-cd atlasfetch
+git clone https://github.com/mafuzyk/halofetch.git
+cd halofetch
 cargo build --release --locked
-install -Dm755 target/release/atlasfetch ~/.local/bin/atlasfetch
+install -Dm755 target/release/halofetch ~/.local/bin/halofetch
 ```
 
 Make sure `~/.local/bin` is in `PATH`. Rust and Cargo are needed only to build from source.
@@ -219,17 +326,17 @@ Make sure `~/.local/bin` is in `PATH`. Rust and Cargo are needed only to build f
 ### Nix
 
 ```bash
-nix run github:mafuzyk/atlasfetch
-nix profile install github:mafuzyk/atlasfetch
+nix run github:mafuzyk/halofetch
+nix profile install github:mafuzyk/halofetch
 ```
 
 ### Update a source installation
 
 ```bash
-atlasfetch update
+halofetch update
 ```
 
-The updater refuses a dirty checkout, pulls with Git, builds from the lockfile, and installs to `~/.local/bin/atlasfetch`. Point it at a custom checkout with `ATLASFETCH_SRC=/path/to/atlasfetch`.
+The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/halofetch` (on Windows, see [Windows](#windows)). It finds the checkout through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `HALOFETCH_SRC=/path/to/halofetch` to choose one explicitly. `ATLASFETCH_SRC` is used when `HALOFETCH_SRC` is not set.
 
 ### Start with your shell
 
@@ -238,54 +345,133 @@ Static mode is the sensible choice for a greeting:
 ```fish
 # ~/.config/fish/config.fish
 if status is-interactive
-    atlasfetch fetch
+    halofetch fetch
 end
 ```
 
 ```bash
 # ~/.bashrc
 if [[ $- == *i* ]]; then
-    atlasfetch fetch
+    halofetch fetch
 fi
 ```
 
 ```zsh
 # ~/.zshrc
 if [[ -o interactive ]]; then
-    atlasfetch fetch
+    halofetch fetch
 fi
 ```
 
-Starting the live workspace recursively from the shell it launches would be spectacular but unhelpful, so use `fetch` in shell startup files.
+Starting the live workspace from the shell it launches would nest one shell inside another, so use `fetch` in shell startup files.
+
+## Windows
+
+HaloFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program. The fetch, the editor, the JSON output and the monitor work as on Linux. Fields that have no Windows source are hidden, as listed below.
+
+### Install
+
+Download `halofetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\halofetch-v3.0.0-x86_64-pc-windows-msvc.zip
+```
+
+Extract `halofetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
+
+To build from source, install Rust with the MSVC toolchain and the Visual Studio C++ build tools, then run:
+
+```powershell
+git clone https://github.com/mafuzyk/halofetch.git
+cd halofetch
+cargo install --path . --locked
+```
+
+`cargo install` places `halofetch.exe` in `%USERPROFILE%\.cargo\bin`. To greet every PowerShell session, add `halofetch fetch` to your PowerShell profile (`$PROFILE`).
+
+### Configuration
+
+The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` prints the path in use, and `-c` selects another file as on Linux. Your own logos go in the `logos` folder next to it. A logo pasted in the editor is saved there as `custom-logo.txt`.
+
+### Updating
+
+`halofetch update` needs a source checkout, with `git` and `cargo` on `PATH`. It builds `target\release\halofetch.exe` and installs it to `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. Windows does not let a running program be overwritten, so the installed copy is renamed to `halofetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add. Release archives are not updated by this command; replace `halofetch.exe` yourself.
+
+### What is shown
+
+| Fields | Where the value comes from |
+|---|---|
+| OS, Kernel, Arch, Locale, Uptime | Registry product name, display version and build; native system information; the user's default locale; time since boot |
+| User, Host, Device | The user name; the computer name; the BIOS manufacturer and product from the registry |
+| CPU, CPU Usage | Processor name and clock from the registry, thread count; CPU usage is live, monitor only |
+| GPU | Display adapter names from the registry |
+| VRAM | Total dedicated video memory of the largest dedicated adapter, from the registry, with the usage from the `GPU Adapter Memory` performance counter. Only the total is shown when the counter is unavailable |
+| Memory, Swap, Disk | Physical memory; the page file as swap; the system drive |
+| Battery | The system power status. Absent on machines without a battery |
+| Resolution | Attached displays and their current modes |
+| Local IP | An up Ethernet or Wi-Fi adapter when there is one, otherwise another up adapter. Link-local `169.254.x.x` addresses are skipped |
+| WM | Always `DWM`, the Desktop Window Manager, the compositor on Windows 8 and later |
+| Packages | Scoop and Chocolatey counts, such as `34 (scoop), 12 (choco)`. Winget and Microsoft Store packages are not counted |
+| Shell, Terminal, Processes | One process list: the nearest known shell in the parent processes (PowerShell, Windows PowerShell, cmd, bash, zsh, fish, nu, elvish, xonsh), and the terminal that hosts it |
+
+These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
+
+Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. If icons show as replacement glyphs there, set `layout.icons` to `"unicode"` for plain symbols or to `"none"` to draw no icons. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
+
+### Monitor
+
+`halofetch monitor` starts the shell from `$SHELL` when that names an existing file. Otherwise it uses `pwsh.exe`, then `powershell.exe`, then `%COMSPEC%` (normally `cmd.exe`). Bash, zsh and fish start with `-i`. PowerShell and cmd start without arguments. Git Bash sets `$SHELL` to a path Windows cannot open, so PowerShell is used unless you set `SHELL` to a Windows path. `Ctrl+Q` closes the workspace.
+
+### Pasting a logo
+
+Legacy consoles do not deliver a paste as a paste event, so the editor offers **Paste logo from clipboard** in the Logo section on Windows. Press `Enter` on it to use the clipboard text as the logo, which is saved with the configuration when you save.
 
 ## Machine-readable output
 
-AtlasFetch is allowed to be pretty without being hostile to scripts:
-
 ```bash
-atlasfetch --format json | jq '.system.cpu'
+halofetch --format json | jq '.system.cpu'
 ```
 
-The JSON schema is versioned and omits unavailable optional values. Human renderers never need to be scraped.
+The output is a JSON object with `schema_version` 2, `system` and `gauges`. A shortened example from a real run:
+
+```json
+{
+  "schema_version": 2,
+  "system": {
+    "os": "Ubuntu 24.04.5 LTS",
+    "kernel": "6.18.44-fc-v77",
+    "cpu": "Intel Xeon (4)",
+    "memory": "0.63 / 15.7 GiB (4%)"
+  },
+  "gauges": {
+    "memory": {
+      "used": 674316288,
+      "total": 16876511232,
+      "percent": 4.0
+    }
+  }
+}
+```
+
+- `system` holds every detected field as its display text, in the order of the field list. Fields that cannot be read are absent. The panel configuration does not filter this output.
+- `gauges` holds numbers for the fields that have them. `memory`, `swap`, `disk` and `vram` are objects with `used` and `total` in bytes and a `percent`. `cpu_percent` and `gpu_percent` come from the live monitor, so one-shot output leaves them out. `cpu_temp_celsius`, `battery_percent` and `brightness_percent` appear when the hardware reports them.
+- Scripts should check for a key before reading it.
 
 ## Development
 
-AtlasFetch is organized as a component renderer rather than four unrelated print functions. System collection produces one model; scenes arrange components; ANSI output, Setup preview, and live mode consume the same visual rules.
+HaloFetch collects one model of the system, lays it out in a scene, and draws it through one styled canvas. The static output, the editor preview and the live monitor all use that path.
 
 ```text
-Linux interfaces + local commands
-              │
-              ▼
-          SysInfo model
-              │
-      ┌───────┴────────┐
-      ▼                ▼
- configurable       live metrics
-   components        + PTY shell
-      │                │
-      └───────┬────────┘
-              ▼
-       responsive scenes
+/proc, /sys, /etc, environment, local commands
+                    │
+                    ▼
+        info::collect ──► SysInfo ──► logo + Config
+                    │                       │
+                    │                       ▼
+                    │               render::scene
+                    │                       │
+     info::refresh_live (monitor)           ▼
+                    │           ANSI · plain text · ratatui (editor, monitor)
 ```
 
 Run the same quality gate as CI:
@@ -301,34 +487,47 @@ Important modules:
 
 | Path | Responsibility |
 |---|---|
-| `src/info.rs` | Linux information and sensor collection |
-| `src/component/` | Components, responsive scenes, and live metrics |
-| `src/tui/` | Editor state, input handling, and rendering |
-| `src/live.rs` | Monitor workspace, PTY shell, VT100 rendering |
-| `src/config.rs` | Schema, migration, validation, atomic persistence |
-| `src/output.rs` | Versioned JSON output |
-| `src/update.rs` | Safe source-checkout updater |
+| `src/main.rs` | Command dispatch, static fetch, first run |
+| `src/cli.rs` | Commands and flags (clap); legacy flags are hidden |
+| `src/config.rs` | Schema version 3, defaults, validation, migration, atomic saving |
+| `src/field.rs` | The 32 fields: keys, labels, icons, groups, gauges |
+| `src/info/linux/` | Detection and live readings from `/proc`, `/sys` and a few local commands |
+| `src/info/windows/` | Detection through Win32 calls and read-only registry values |
+| `src/render/scene.rs` | The three scenes and their fallbacks |
+| `src/render/blocks.rs` | Information rows, bars, gauges, titles and color blocks |
+| `src/render/mod.rs` | Styled canvas, text width and output conversion |
+| `src/logo.rs` | Logo discovery, cleaning and coloring |
+| `src/theme.rs` | Built-in palettes and gradients |
+| `src/tui/` | Setup editor: state and keys (`app.rs`), drawing (`view.rs`), terminal lifecycle (`mod.rs`), Windows clipboard (`clipboard.rs`) |
+| `src/live.rs` | Monitor workspace: PTY shell and VT100 rendering |
+| `src/output.rs` | JSON output, schema version 2 |
+| `src/benchmark.rs` | Timing of collection and rendering |
+| `src/update.rs` | Updater for source checkouts |
+| `build.rs` | Embeds the `logos/` directory in the binary |
 
-Contributions and bug reports are welcome. Please include the terminal emulator, shell, terminal dimensions, selected scene, and relevant config when reporting a layout problem—the terminal is part of the rendering environment.
+CI runs clippy, the tests and the release build on Ubuntu and Windows. The formatting check runs on Ubuntu.
+
+Contributions and bug reports are welcome. Please include the terminal emulator, shell, terminal dimensions, selected scene and relevant configuration when reporting a layout problem. The terminal is part of the rendering environment.
 
 ## Roadmap
 
-- [x] Four responsive visual scenes
-- [x] Live TUI editor and exact preview
-- [x] 534 embedded logo variants and custom ASCII
-- [x] Configurable fields, panels, labels, icons, and palettes
+- [x] Three responsive scenes: classic, side and dashboard
+- [x] Setup editor with sections, popups and an exact preview
+- [x] 456 embedded logos with 78 compact variants
+- [x] Configurable fields, panels, labels, icons and palettes
 - [x] Monitor workspace with a real PTY-backed shell
-- [x] Versioned JSON and built-in collection benchmark
-- [x] Atomic config persistence and migration
-- [x] GNU/musl release artifacts with SHA-256 checksums
-- [x] CI formatting, lint, tests, snapshots, and release builds
+- [x] Versioned JSON output and a built-in benchmark
+- [x] Atomic configuration writes and migration from versions 1 and 2
+- [x] GNU, musl and Windows (MSVC) release artifacts with SHA-256 checksums
+- [x] CI with formatting, lints, tests and release builds on Linux and Windows
 - [ ] Generate a complete configuration from CLI flags
 - [ ] AUR package and Gentoo ebuild
 - [ ] ARM64 and signed release artifacts
+- [ ] Fresh screenshots for v3
 
 ## License
 
-AtlasFetch is licensed under [GPL-3.0-or-later](LICENSE).
+HaloFetch is licensed under [GPL-3.0-or-later](LICENSE).
 
 <div align="center">
 
