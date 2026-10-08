@@ -17,7 +17,7 @@ use super::{format_bytes_pair, format_percent, format_uptime, put, Battery, CpuS
 pub(super) use hardware::cpu_totals;
 
 /// Windows 8 and later always run this compositor; there is nothing to detect.
-const DESKTOP_WINDOW_MANAGER: &str = "Desktop Window Manager";
+const DESKTOP_WINDOW_MANAGER: &str = "DWM";
 
 pub(super) fn collect(info: &mut SysInfo) {
     std::thread::scope(|scope| {
