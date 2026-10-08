@@ -62,7 +62,8 @@ fn ensure_clean_checkout(source: &Path) -> Result<()> {
 }
 
 fn detect_source_dir() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HALOFETCH_SRC").map(PathBuf::from) {
+    let source = std::env::var_os("HALOFETCH_SRC").or_else(|| std::env::var_os("ATLASFETCH_SRC"));
+    if let Some(path) = source.map(PathBuf::from) {
         return validate_source(path);
     }
 
@@ -87,6 +88,11 @@ fn detect_source_dir() -> Result<PathBuf> {
             "halofetch",
             "code/halofetch",
             "dev/halofetch",
+            "Projetos/atlasfetch",
+            "src/atlasfetch",
+            "atlasfetch",
+            "code/atlasfetch",
+            "dev/atlasfetch",
         ] {
             let candidate = home.join(relative);
             if is_source_dir(&candidate) {
@@ -105,7 +111,7 @@ fn validate_source(path: PathBuf) -> Result<PathBuf> {
         Ok(path)
     } else {
         Err(eyre!(
-            "HALOFETCH_SRC is not an HaloFetch source checkout: {}",
+            "HALOFETCH_SRC is not a HaloFetch source checkout: {}",
             path.display()
         ))
     }

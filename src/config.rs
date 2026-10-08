@@ -359,6 +359,8 @@ impl Default for Fields {
 
 // ── Paths ────────────────────────────────────────────────────────────────
 
+const CONFIG_DIR: &str = "halofetch";
+const LEGACY_DIR: &str = "atlasfetch";
 pub fn set_config_path(path: PathBuf) {
     // Only the first call has an effect; the override is fixed for the process.
     let _ = CONFIG_OVERRIDE.set(path);
@@ -378,16 +380,81 @@ fn default_config_dir() -> Result<PathBuf> {
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
     {
-        return Ok(xdg.join("halofetch"));
+        let dir = xdg.join(CONFIG_DIR);
+        migrate_once(&dir);
+        return Ok(dir);
     }
     let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
-    Ok(base.home_dir().join(".config").join("halofetch"))
+    let dir = base.home_dir().join(".config").join(CONFIG_DIR);
+    migrate_once(&dir);
+    Ok(dir)
 }
 
 #[cfg(windows)]
 fn default_config_dir() -> Result<PathBuf> {
     let base = BaseDirs::new().ok_or_else(|| eyre!("cannot determine the home directory"))?;
-    Ok(base.config_dir().join("halofetch"))
+    let dir = base.config_dir().join(CONFIG_DIR);
+    migrate_once(&dir);
+    Ok(dir)
+}
+
+// Tests must never move the real configuration directory.
+#[cfg(not(test))]
+fn migrate_once(new_dir: &Path) {
+    static MIGRATION: std::sync::Once = std::sync::Once::new();
+    MIGRATION.call_once(|| migrate_legacy_dir(new_dir));
+}
+
+#[cfg(test)]
+fn migrate_once(_new_dir: &Path) {}
+
+fn migrate_legacy_dir(new_dir: &Path) {
+    if new_dir.exists() {
+        return;
+    }
+    let Some(parent) = new_dir.parent() else {
+        return;
+    };
+    let legacy = parent.join(LEGACY_DIR);
+    if !legacy.is_dir() {
+        return;
+    }
+    match move_dir(&legacy, new_dir) {
+        Ok(()) => eprintln!(
+            "halofetch: moved the configuration from {} to {}",
+            legacy.display(),
+            new_dir.display()
+        ),
+        Err(err) => eprintln!(
+            "halofetch: warning: could not migrate the configuration from {}: {err}",
+            legacy.display()
+        ),
+    }
+}
+
+fn move_dir(legacy: &Path, new_dir: &Path) -> std::io::Result<()> {
+    if fs::rename(legacy, new_dir).is_ok() {
+        return Ok(());
+    }
+    if let Err(err) = copy_dir(legacy, new_dir) {
+        let _ = fs::remove_dir_all(new_dir);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -1351,5 +1418,53 @@ mod tests {
             config_parent(Path::new("/tmp/halofetch/custom.json")).unwrap(),
             PathBuf::from("/tmp/halofetch")
         );
+    }
+
+    #[test]
+    fn migrates_the_legacy_directory_when_the_new_one_is_missing() {
+        let scratch = Scratch::new("migrate-legacy");
+        let legacy = scratch.file(LEGACY_DIR);
+        let new_dir = scratch.file(CONFIG_DIR);
+        fs::create_dir_all(legacy.join("logos")).unwrap();
+        fs::write(legacy.join("config.json"), "{}").unwrap();
+        fs::write(legacy.join("logos").join("x.txt"), "logo").unwrap();
+
+        migrate_legacy_dir(&new_dir);
+
+        assert!(new_dir.join("config.json").is_file());
+        assert!(new_dir.join("logos").join("x.txt").is_file());
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn keeps_both_directories_when_the_new_one_exists() {
+        let scratch = Scratch::new("keep-existing");
+        let legacy = scratch.file(LEGACY_DIR);
+        let new_dir = scratch.file(CONFIG_DIR);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("config.json"), "legacy").unwrap();
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(new_dir.join("config.json"), "new").unwrap();
+
+        migrate_legacy_dir(&new_dir);
+
+        assert_eq!(
+            fs::read_to_string(new_dir.join("config.json")).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            fs::read_to_string(legacy.join("config.json")).unwrap(),
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn does_nothing_without_a_legacy_directory() {
+        let scratch = Scratch::new("no-legacy");
+        let new_dir = scratch.file(CONFIG_DIR);
+
+        migrate_legacy_dir(&new_dir);
+
+        assert!(!new_dir.exists());
     }
 }
