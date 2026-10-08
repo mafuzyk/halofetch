@@ -344,7 +344,13 @@ fn swatch(colors: &[Color]) -> String {
         .map(|&color| Span::new("  ", Style::new().bg(color)))
         .collect();
     let line = Line::from_spans(spans);
-    styled_text(&[line]).trim_end().to_string()
+    // The colors are the content here, so `NO_COLOR` does not blank them.
+    let text = if ansi_supported() {
+        render::to_ansi(&[line])
+    } else {
+        render::to_plain(&[line])
+    };
+    text.trim_end().to_string()
 }
 
 fn padded(text: &str, width: usize) -> String {
