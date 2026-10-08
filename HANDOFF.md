@@ -91,6 +91,21 @@ Still open:
 - `NO_COLOR` is honoured by the monitor (through crossterm) but not by the static fetch on a terminal.
 - Existing config files keep their saved `cascade` value, so the new default only applies to new files.
 
+## Ideas, not started
+
+Parked until the open items above are done. In order of expected payoff:
+
+1. `--format svg` (then PNG/HTML): export the scene from the span canvas in `src/render/mod.rs`, so sharing does not depend on terminal screenshots.
+2. A scene that is really live in `monitor` and `fetch --watch`: CPU/memory history sparklines in the dashboard and an animated logo gradient.
+3. `halofetch init <shell>`: install the startup hook in the PowerShell/bash/zsh/fish profile instead of asking the user to edit it.
+4. `preset export` / `preset import`: one shareable file with palette, layout and fields.
+5. Palette picked from the wallpaper or from the terminal theme.
+6. Image logos (sixel/kitty). Low priority: a lot of work and fastfetch already does it.
+
+Distribution comes last: crates.io, winget, scoop. The AUR package will be published by the maintainer.
+
+Before quoting any speed number, compare `halofetch benchmark` against fastfetch on the same machine.
+
 ## Conventions
 
 - Conventional Commits, one commit per logical change, English messages. No AI attribution or co-author lines in commits or PRs.
