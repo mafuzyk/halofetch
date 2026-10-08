@@ -435,17 +435,17 @@ pub fn watch(cfg: &Config, scene: Scene, interval: Duration) -> Result<()> {
     let mut stdout = io::stdout();
     let mut drawn = None;
     loop {
-        let (width, _) = terminal::size()?;
+        let (width, height) = terminal::size()?;
         let ctx = RenderCtx {
             info: &system,
             cfg,
             logos: &logos,
             width: usize::from(width),
         };
-        let text = styled_text(&render::scene::render(scene, &ctx));
-        stdout.write_all(frame_bytes(drawn, width, &text).as_bytes())?;
+        let text = fit_frame(&styled_text(&render::scene::render(scene, &ctx)), height);
+        stdout.write_all(frame_bytes(drawn, width, height, &text).as_bytes())?;
         stdout.flush()?;
-        drawn = Some((text.lines().count(), width));
+        drawn = Some((text.lines().count(), width, height));
         if wait_for_quit(interval)? {
             return Ok(());
         }
@@ -508,21 +508,32 @@ fn wait_for_quit(interval: Duration) -> Result<bool> {
     }
 }
 
-/// Bytes that draw `text` over the frame on screen. `drawn` holds the row count and the
-/// width of that frame, or `None` before the first one. A width change clears the screen,
-/// and a shorter frame clears the rows it leaves behind. Raw mode is on while drawing, so
-/// every line ends with a carriage return.
-fn frame_bytes(drawn: Option<(usize, u16)>, width: u16, text: &str) -> String {
+/// The first lines of a frame that leave the last terminal row free. The next frame moves
+/// the cursor up over this one, and a frame that reaches the bottom row scrolls its top
+/// lines into the scrollback instead.
+fn fit_frame(text: &str, height: u16) -> String {
+    let keep = usize::from(height.saturating_sub(1)).max(1);
+    text.lines()
+        .take(keep)
+        .flat_map(|line| [line, "\n"])
+        .collect()
+}
+
+/// Bytes that draw `text` over the frame on screen. `drawn` holds the row count, width and
+/// height of that frame, or `None` before the first one. A change of width or height clears
+/// the screen, and a shorter frame clears the rows it leaves behind. Raw mode is on while
+/// drawing, so every line ends with a carriage return.
+fn frame_bytes(drawn: Option<(usize, u16, u16)>, width: u16, height: u16, text: &str) -> String {
     let rows = text.lines().count();
     let mut out = String::new();
     let previous = match drawn {
-        Some((_, drawn_width)) if drawn_width != width => {
+        Some((_, drawn_width, drawn_height)) if (drawn_width, drawn_height) != (width, height) => {
             out.push_str("\x1b[2J\x1b[H");
             None
         }
         other => other,
     };
-    if let Some((previous_rows, _)) = previous {
+    if let Some((previous_rows, _, _)) = previous {
         if previous_rows > 0 {
             let up = u16::try_from(previous_rows).unwrap_or(u16::MAX);
             let _ = cursor::MoveUp(up).write_ansi(&mut out);
@@ -533,7 +544,7 @@ fn frame_bytes(drawn: Option<(usize, u16)>, width: u16, text: &str) -> String {
         out.push_str(line);
         out.push_str("\x1b[K\r\n");
     }
-    if previous.is_some_and(|(previous_rows, _)| previous_rows > rows) {
+    if previous.is_some_and(|(previous_rows, _, _)| previous_rows > rows) {
         out.push_str("\x1b[J");
     }
     out
@@ -697,8 +708,8 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_queries, cursor_report, frame_bytes, key_bytes, paste_bytes, shell_size, split,
-        windows_shell, windows_shell_args,
+        cursor_queries, cursor_report, fit_frame, frame_bytes, key_bytes, paste_bytes, shell_size,
+        split, windows_shell, windows_shell_args,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -839,27 +850,52 @@ mod tests {
     }
 
     #[test]
+    fn frame_that_fits_is_kept_whole() {
+        assert_eq!(fit_frame("one\ntwo\n", 3), "one\ntwo\n");
+    }
+
+    #[test]
+    fn frame_taller_than_the_screen_keeps_one_row_free() {
+        assert_eq!(fit_frame("one\ntwo\nthree\nfour\n", 3), "one\ntwo\n");
+        assert_eq!(fit_frame("one\ntwo\nthree\n", 3), "one\ntwo\n");
+    }
+
+    #[test]
+    fn frame_keeps_at_least_one_line() {
+        assert_eq!(fit_frame("one\ntwo\n", 1), "one\n");
+        assert_eq!(fit_frame("one\ntwo\n", 0), "one\n");
+        assert_eq!(fit_frame("\n\n", 1).lines().count(), 1);
+    }
+
+    #[test]
     fn first_watch_frame_moves_nothing() {
         assert_eq!(
-            frame_bytes(None, 80, "one\ntwo\n"),
+            frame_bytes(None, 80, 24, "one\ntwo\n"),
             "one\x1b[K\r\ntwo\x1b[K\r\n"
         );
     }
 
     #[test]
-    fn watch_frame_of_the_same_height_moves_up_over_the_previous_one() {
-        assert!(frame_bytes(Some((2, 80)), 80, "one\ntwo\n").starts_with("\x1b[2A\r"));
+    fn watch_frame_of_the_same_size_moves_up_over_the_previous_one() {
+        assert!(frame_bytes(Some((2, 80, 24)), 80, 24, "one\ntwo\n").starts_with("\x1b[2A\r"));
     }
 
     #[test]
     fn shorter_watch_frame_clears_the_rows_below() {
-        assert!(frame_bytes(Some((3, 80)), 80, "one\n").ends_with("\x1b[J"));
-        assert!(!frame_bytes(Some((1, 80)), 80, "one\ntwo\n").ends_with("\x1b[J"));
+        assert!(frame_bytes(Some((3, 80, 24)), 80, 24, "one\n").ends_with("\x1b[J"));
+        assert!(!frame_bytes(Some((1, 80, 24)), 80, 24, "one\ntwo\n").ends_with("\x1b[J"));
     }
 
     #[test]
     fn watch_frame_after_a_width_change_clears_the_screen() {
-        let frame = frame_bytes(Some((2, 80)), 100, "one\ntwo\n");
+        let frame = frame_bytes(Some((2, 80, 24)), 100, 24, "one\ntwo\n");
+        assert!(frame.starts_with("\x1b[2J\x1b[H"));
+        assert!(!frame.contains("\x1b[2A"));
+    }
+
+    #[test]
+    fn watch_frame_after_a_height_change_clears_the_screen() {
+        let frame = frame_bytes(Some((2, 80, 24)), 80, 30, "one\ntwo\n");
         assert!(frame.starts_with("\x1b[2J\x1b[H"));
         assert!(!frame.contains("\x1b[2A"));
     }
