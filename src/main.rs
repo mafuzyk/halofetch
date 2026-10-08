@@ -11,6 +11,7 @@ mod theme;
 mod tui;
 mod update;
 
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -203,12 +204,15 @@ fn static_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-/// Colors are dropped for piped output that asked for `NO_COLOR`, and everywhere the
-/// console cannot show ANSI escapes.
+/// Plain text where the console cannot show ANSI escapes, and wherever `NO_COLOR` is set to
+/// a non-empty value, terminal or not.
 fn plain_output() -> bool {
-    !ansi_supported()
-        || (!io::stdout().is_terminal()
-            && std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()))
+    plain_output_for(ansi_supported(), std::env::var_os("NO_COLOR").as_deref())
+}
+
+/// The plain-text rule. Pure, so it is tested without changing the environment.
+fn plain_output_for(ansi_supported: bool, no_color: Option<&OsStr>) -> bool {
+    !ansi_supported || no_color.is_some_and(|value| !value.is_empty())
 }
 
 /// Legacy Windows consoles show escapes as garbage until virtual terminal processing is
@@ -223,12 +227,12 @@ fn ansi_supported() -> bool {
     true
 }
 
-/// Rendered lines for the terminal: ANSI, or plain text when the console cannot show it.
+/// Rendered lines for the terminal: ANSI, or plain text where `plain_output` says so.
 pub(crate) fn styled_text(lines: &[Line]) -> String {
-    if ansi_supported() {
-        render::to_ansi(lines)
-    } else {
+    if plain_output() {
         render::to_plain(lines)
+    } else {
+        render::to_ansi(lines)
     }
 }
 
@@ -426,5 +430,22 @@ mod tests {
         assert!(text.contains("\x1b[48;2;1;2;3m"));
         assert!(text.contains("\x1b[48;2;4;5;6m"));
         assert!(!text.ends_with('\n'));
+    }
+
+    #[test]
+    fn unset_or_empty_no_color_keeps_colors() {
+        assert!(!plain_output_for(true, None));
+        assert!(!plain_output_for(true, Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn no_color_turns_colors_off_on_a_terminal() {
+        assert!(plain_output_for(true, Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn consoles_without_ansi_are_always_plain() {
+        assert!(plain_output_for(false, None));
+        assert!(plain_output_for(false, Some(OsStr::new(""))));
     }
 }
