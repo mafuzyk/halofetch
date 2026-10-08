@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre::eyre;
 use color_eyre::Result;
+use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::Command;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -30,6 +32,7 @@ use crate::info::{self, CpuSampler, SysInfo};
 use crate::logo::LogoSet;
 use crate::render::scene::RenderCtx;
 use crate::render::{self, Line};
+use crate::styled_text;
 use crate::tui::{disable_bracketed_paste, enable_bracketed_paste};
 
 /// The information region takes at most this share of the screen height.
@@ -422,6 +425,120 @@ fn is_quit(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+/// Redraws the static scene in place every `interval` until q, Esc or Ctrl+C. No shell is
+/// started, and the system is detected once and refreshed between frames.
+pub fn watch(cfg: &Config, scene: Scene, interval: Duration) -> Result<()> {
+    let mut system = info::collect();
+    let logos = cfg.logo_set(&system);
+    let mut sampler = CpuSampler::new();
+    let _session = WatchTerminal::enter()?;
+    let mut stdout = io::stdout();
+    let mut drawn = None;
+    loop {
+        let (width, _) = terminal::size()?;
+        let ctx = RenderCtx {
+            info: &system,
+            cfg,
+            logos: &logos,
+            width: usize::from(width),
+        };
+        let text = styled_text(&render::scene::render(scene, &ctx));
+        stdout.write_all(frame_bytes(drawn, width, &text).as_bytes())?;
+        stdout.flush()?;
+        drawn = Some((text.lines().count(), width));
+        if wait_for_quit(interval)? {
+            return Ok(());
+        }
+        info::refresh_live(&mut system, &mut sampler);
+    }
+}
+
+/// Raw mode and a hidden cursor for the length of a watch. Dropping it restores the
+/// terminal on every exit path, errors included.
+struct WatchTerminal;
+
+impl WatchTerminal {
+    fn enter() -> Result<Self> {
+        terminal::enable_raw_mode()?;
+        if let Err(error) = execute!(io::stdout(), cursor::Hide) {
+            let _ = terminal::disable_raw_mode();
+            return Err(error.into());
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for WatchTerminal {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), cursor::Show);
+        let _ = terminal::disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = stdout.write_all(b"\r\n");
+        let _ = stdout.flush();
+    }
+}
+
+fn is_watch_quit(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('q' | 'Q') | KeyCode::Esc)
+        || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+/// Waits up to `interval` for input and returns `true` when the user asked to quit. Each
+/// read is followed by a drain of the pending events, and the wait ends at the deadline,
+/// so a burst of resize events does not shorten it.
+fn wait_for_quit(interval: Duration) -> Result<bool> {
+    let deadline = Instant::now() + interval;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !event::poll(remaining)? {
+            return Ok(false);
+        }
+        loop {
+            let quit = matches!(
+                event::read()?,
+                Event::Key(key) if key.kind == KeyEventKind::Press && is_watch_quit(key)
+            );
+            if quit {
+                return Ok(true);
+            }
+            if !event::poll(Duration::ZERO)? {
+                break;
+            }
+        }
+    }
+}
+
+/// Bytes that draw `text` over the frame on screen. `drawn` holds the row count and the
+/// width of that frame, or `None` before the first one. A width change clears the screen,
+/// and a shorter frame clears the rows it leaves behind. Raw mode is on while drawing, so
+/// every line ends with a carriage return.
+fn frame_bytes(drawn: Option<(usize, u16)>, width: u16, text: &str) -> String {
+    let rows = text.lines().count();
+    let mut out = String::new();
+    let previous = match drawn {
+        Some((_, drawn_width)) if drawn_width != width => {
+            out.push_str("\x1b[2J\x1b[H");
+            None
+        }
+        other => other,
+    };
+    if let Some((previous_rows, _)) = previous {
+        if previous_rows > 0 {
+            let up = u16::try_from(previous_rows).unwrap_or(u16::MAX);
+            let _ = cursor::MoveUp(up).write_ansi(&mut out);
+        }
+        out.push('\r');
+    }
+    for line in text.lines() {
+        out.push_str(line);
+        out.push_str("\x1b[K\r\n");
+    }
+    if previous.is_some_and(|(previous_rows, _)| previous_rows > rows) {
+        out.push_str("\x1b[J");
+    }
+    out
+}
+
 fn render_monitor(frame: &mut Frame, area: Rect, lines: &[Line], interval_ms: u64) {
     frame.render_widget(
         Paragraph::new(Text::from(render::to_ratatui(lines))).block(
@@ -580,8 +697,8 @@ fn key_bytes(key: KeyEvent) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cursor_queries, cursor_report, key_bytes, paste_bytes, shell_size, split, windows_shell,
-        windows_shell_args,
+        cursor_queries, cursor_report, frame_bytes, key_bytes, paste_bytes, shell_size, split,
+        windows_shell, windows_shell_args,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::layout::Rect;
@@ -719,5 +836,31 @@ mod tests {
         ] {
             assert!(windows_shell_args(Path::new(shell)).is_empty(), "{shell}");
         }
+    }
+
+    #[test]
+    fn first_watch_frame_moves_nothing() {
+        assert_eq!(
+            frame_bytes(None, 80, "one\ntwo\n"),
+            "one\x1b[K\r\ntwo\x1b[K\r\n"
+        );
+    }
+
+    #[test]
+    fn watch_frame_of_the_same_height_moves_up_over_the_previous_one() {
+        assert!(frame_bytes(Some((2, 80)), 80, "one\ntwo\n").starts_with("\x1b[2A\r"));
+    }
+
+    #[test]
+    fn shorter_watch_frame_clears_the_rows_below() {
+        assert!(frame_bytes(Some((3, 80)), 80, "one\n").ends_with("\x1b[J"));
+        assert!(!frame_bytes(Some((1, 80)), 80, "one\ntwo\n").ends_with("\x1b[J"));
+    }
+
+    #[test]
+    fn watch_frame_after_a_width_change_clears_the_screen() {
+        let frame = frame_bytes(Some((2, 80)), 100, "one\ntwo\n");
+        assert!(frame.starts_with("\x1b[2J\x1b[H"));
+        assert!(!frame.contains("\x1b[2A"));
     }
 }

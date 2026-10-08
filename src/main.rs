@@ -15,6 +15,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::Parser;
 use color_eyre::eyre::eyre;
@@ -45,7 +46,19 @@ fn main() -> Result<()> {
 
 fn run_command(args: &Args, command: &Command) -> Result<()> {
     match command {
-        Command::Fetch => print_fetch(args, &Config::load()?),
+        Command::Fetch { watch: false, .. } => print_fetch(args, &Config::load()?),
+        Command::Fetch {
+            watch: true,
+            interval,
+        } => {
+            if matches!(args.format, OutputFormat::Json) {
+                return Err(eyre!("--watch cannot be combined with --format json"));
+            }
+            require_terminal("fetch --watch")?;
+            let cfg = Config::load()?;
+            let interval = interval.unwrap_or(cfg.startup.interval_ms);
+            live::watch(&cfg, scene_for(args, &cfg), Duration::from_millis(interval))
+        }
         Command::Monitor { interval } => {
             require_terminal("monitor")?;
             let cfg = Config::load()?;
@@ -211,7 +224,7 @@ fn ansi_supported() -> bool {
 }
 
 /// Rendered lines for the terminal: ANSI, or plain text when the console cannot show it.
-fn styled_text(lines: &[Line]) -> String {
+pub(crate) fn styled_text(lines: &[Line]) -> String {
     if ansi_supported() {
         render::to_ansi(lines)
     } else {

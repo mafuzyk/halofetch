@@ -17,7 +17,14 @@ pub enum OutputFormat {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Print one static fetch and exit
-    Fetch,
+    Fetch {
+        /// Keep the scene on screen and redraw it in place until q, Esc or Ctrl+C
+        #[arg(short, long)]
+        watch: bool,
+        /// Refresh interval in milliseconds with --watch [default: startup.interval_ms]
+        #[arg(short, long, requires = "watch", value_parser = clap::value_parser!(u64).range(100..=60_000))]
+        interval: Option<u64>,
+    },
     /// Refresh system metrics in place above an embedded shell
     Monitor {
         /// Refresh interval in milliseconds [default: startup.interval_ms]
@@ -172,6 +179,32 @@ mod tests {
             Some(Command::Monitor { interval: None })
         ));
         assert!(Args::try_parse_from(["atlasfetch", "monitor", "-i", "5"]).is_err());
+    }
+
+    #[test]
+    fn fetch_watch_and_interval_are_parsed() {
+        assert!(matches!(
+            parse(&["atlasfetch", "fetch"]).command,
+            Some(Command::Fetch {
+                watch: false,
+                interval: None
+            })
+        ));
+        assert!(matches!(
+            parse(&["atlasfetch", "fetch", "--watch"]).command,
+            Some(Command::Fetch {
+                watch: true,
+                interval: None
+            })
+        ));
+        assert!(matches!(
+            parse(&["atlasfetch", "fetch", "-w", "-i", "500"]).command,
+            Some(Command::Fetch {
+                watch: true,
+                interval: Some(500)
+            })
+        ));
+        assert!(Args::try_parse_from(["atlasfetch", "fetch", "--interval", "500"]).is_err());
     }
 
     #[test]
