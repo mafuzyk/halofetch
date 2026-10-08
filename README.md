@@ -405,7 +405,7 @@ The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` 
 | User, Host, Device | The user name; the computer name; the BIOS manufacturer and product from the registry |
 | CPU, CPU Usage | Processor name and clock from the registry, thread count; CPU usage is live, monitor only |
 | GPU | Display adapter names from the registry |
-| VRAM | Total dedicated video memory of the largest dedicated adapter, from the registry. There is no usage gauge on Windows |
+| VRAM | Total dedicated video memory of the largest dedicated adapter, from the registry, with the usage from the `GPU Adapter Memory` performance counter. Only the total is shown when the counter is unavailable |
 | Memory, Swap, Disk | Physical memory; the page file as swap; the system drive |
 | Battery | The system power status. Absent on machines without a battery |
 | Resolution | Attached displays and their current modes |

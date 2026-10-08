@@ -87,8 +87,9 @@ New fix: the monitor's shell pane border was misdrawn because empty vt100 cells 
 
 Still open:
 
-- `fetch --watch` does not handle a scene taller than the terminal: the cursor cannot move above the top row, and old lines stay in the scrollback.
-- `NO_COLOR` is honoured by the monitor (through crossterm) but not by the static fetch on a terminal.
+- `fetch --watch` and `monitor` read the VRAM usage once at startup; the live refresh does not update it (same as Linux).
+- VRAM on machines with two GPUs: used is the largest PDH adapter value and total the largest registry adapter, which may be different adapters.
+- Package count on Windows covers scoop and choco only; `winget list` takes seconds, so it would have to be an opt-in field.
 - Existing config files keep their saved `cascade` value, so the new default only applies to new files.
 
 ## Ideas, not started

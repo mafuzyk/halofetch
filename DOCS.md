@@ -106,7 +106,7 @@ Formas antigas, ocultas em `--help` mas ainda aceitas:
 
 Nomes de cena aceitos, sem diferenciar maiúsculas: `classic`; `side`, com os aliases `classicfetch`, `classic-fetch`, `classic_fetch` e `fastfetch`; `dashboard`, com o alias `cockpit`. Um nome desconhecido é rejeitado com a lista das cenas válidas.
 
-Quando a saída não é um terminal, a largura vem de `COLUMNS` e, sem ela, vale 100 colunas. As cores são removidas apenas quando a saída não é um terminal e `NO_COLOR` está definido e não vazio.
+Quando a saída não é um terminal, a largura vem de `COLUMNS` e, sem ela, vale 100 colunas. As cores são removidas sempre que `NO_COLOR` está definido e não vazio, em terminal ou não.
 
 ## Coleta de informações
 
@@ -557,7 +557,7 @@ As regras de detecção são as mesmas do Linux: cada detector devolve `None` em
 | `cpu` | `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0`: `ProcessorNameString` e `~MHz`; threads por `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)` |
 | `cpu_usage` | Diferenças de `GetSystemTimes` pelo `CpuSampler`; somente no monitor |
 | `gpu` | Classe de adaptadores de vídeo `{4d36e968-e325-11ce-bfc1-08002be10318}`, subchaves chamadas `NNNN`, valor `DriverDesc`. Adaptadores básicos e remotos da Microsoft são ignorados. |
-| `vram` | Total de memória dedicada do maior adaptador dedicado, em `HardwareInformation.qwMemorySize` (ou `MemorySize`) na mesma classe de vídeo. Sem medidor de uso |
+| `vram` | Total de memória dedicada do maior adaptador dedicado, em `HardwareInformation.qwMemorySize` (ou `MemorySize`) na mesma classe de vídeo. O uso vem do contador de desempenho `\GPU Adapter Memory(*)\Dedicated Usage` (PDH); sem ele, só o total é mostrado |
 | `memory`, `swap` | `GlobalMemoryStatusEx`. Swap é o arquivo de paginação além da memória física, e fica ausente quando o arquivo de paginação está vazio |
 | `disk` | `GetDiskFreeSpaceExW` em `%SystemDrive%\`, ou `C:` quando a variável não está definida |
 | `battery` | `GetSystemPowerStatus`. Ausente sem bateria (flag 128) ou com nível desconhecido (255). O status é `Charging`, `Full` ou `Discharging` |
