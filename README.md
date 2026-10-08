@@ -20,6 +20,8 @@ HaloFetch treats terminal output like a layout instead of a list. Its scenes pla
 
 It began as a companion to [atlasWM](https://github.com/mafuzyk/atlaswm), but it has no desktop or window-manager allegiance. Linux is the primary target. Windows 10 and 11 are supported as well, see [Windows](#windows).
 
+**Renamed from atlasfetch.** The command is now `halofetch`. On the first run the configuration directory moves automatically from `atlasfetch` to `halofetch` (`~/.config/atlasfetch` or `%APPDATA%\atlasfetch`), unless `--config` is given. `ATLASFETCH_SRC` still works as a fallback for `HALOFETCH_SRC`.
+
 ## Why HaloFetch?
 
 - **Two modes.** Print one fetch and exit, or stay as a live monitor with a shell underneath.
@@ -52,6 +54,8 @@ Try a scene without changing your configuration:
 halofetch fetch --scene side
 halofetch --scene dashboard
 ```
+
+`halofetch --scene dashboard` prints once and exits. To keep a scene on screen, use `halofetch fetch --watch` (`-w`): it redraws the scene in place every `startup.interval_ms` (1000 ms by default) until `q`, `Esc` or `Ctrl+C`. `-i` or `--interval` sets another interval, from 100 to 60000 ms. `halofetch monitor` adds the embedded shell below the scene.
 
 The scenes adapt to the width of the terminal:
 
@@ -132,6 +136,8 @@ The editor has five sections:
 4. **Layout**: scene, gap, padding, cascade, maximum value width, hiding empty fields, color blocks, the title and its format and separator.
 5. **Startup**: the startup mode (fetch or monitor) and the refresh interval.
 
+The default `cascade` is `0`, which keeps the rows of the classic scene in a straight column. Values from 1 to 10 step the rows inward. A configuration saved before this default keeps its own value.
+
 The editor needs a terminal of at least 60 × 18. Smaller windows show a resize message, and `q` still quits. From 110 columns, the menu, the settings and the preview sit side by side. Narrower terminals show the preview below the settings.
 
 Keys:
@@ -164,13 +170,15 @@ HaloFetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Re
 
 Fields such as CPU usage and GPU usage are live values. They appear only in monitor mode.
 
+When a panel is too narrow for a CPU or GPU value, the value is shortened before it is cut with an ellipsis. The CPU drops its clock frequency first, then its core count. The GPU drops the words Corporation, Inc. and Series.
+
 ### Themes and ASCII
 
-Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` values separated by spaces, change the gradient direction, or save the current palette under a name. Saved palettes appear next to the built-in ones and can be applied from the command line with `halofetch preset apply NAME`.
+Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` values separated by spaces, change the gradient direction, or save the current palette under a name. Saved palettes appear next to the built-in ones and can be applied from the command line with `halofetch preset apply NAME`. The default palette is `amethyst`.
 
 The logo can be detected from your distribution, chosen from the 456 embedded logos, read from a file, or pasted. A pasted logo is saved as `custom-logo.txt` next to the configuration when you save. A file named after a logo in `logos/` inside the configuration directory replaces the embedded logo with the same name.
 
-Nerd Fonts are recommended for the default icons. The layout works without them.
+Nerd Fonts are recommended for the default icons. The layout works without them. When icons show as replacement glyphs, which is the usual case with the default Windows Terminal font, set `"icons": false` in the `layout` section, or turn **Icons** off in the editor's Layout section.
 
 ### Configuration without fear
 
@@ -227,7 +235,8 @@ Minimal shape of the version 3 schema. Field entries are shown as two per panel;
     "style": "powerline",
     "gap": 3,
     "padding": 2,
-    "cascade": 2,
+    "cascade": 0,
+    "icons": true,
     "max_value_width": 0,
     "hide_empty": true,
     "color_blocks": true
@@ -287,6 +296,7 @@ The setup editor is the recommended way to edit the file. See [DOCS.md](DOCS.md)
 | `halofetch --format json` | Print the detected system information as JSON |
 | `halofetch monitor` | Open the live workspace |
 | `halofetch monitor -i 500` | Open the live workspace, refreshing every 500 ms |
+| `halofetch fetch --watch` | Redraw the scene in place until `q`, `Esc` or `Ctrl+C`; `-i` sets the interval |
 | `halofetch config` | Open the setup editor (`config edit` is the same) |
 | `halofetch config path` | Print the active configuration path |
 | `halofetch config reset` | After confirmation, move the configuration aside as `.bak` and open the editor with defaults |
@@ -326,7 +336,7 @@ nix profile install github:mafuzyk/halofetch
 halofetch update
 ```
 
-The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/halofetch` (on Windows, see [Windows](#windows)). It finds the checkout through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `HALOFETCH_SRC=/path/to/halofetch` to choose one explicitly.
+The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/halofetch` (on Windows, see [Windows](#windows)). It finds the checkout through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `HALOFETCH_SRC=/path/to/halofetch` to choose one explicitly. `ATLASFETCH_SRC` is used when `HALOFETCH_SRC` is not set.
 
 ### Start with your shell
 
@@ -394,18 +404,19 @@ The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` 
 | OS, Kernel, Arch, Locale, Uptime | Registry product name, display version and build; native system information; the user's default locale; time since boot |
 | User, Host, Device | The user name; the computer name; the BIOS manufacturer and product from the registry |
 | CPU, CPU Usage | Processor name and clock from the registry, thread count; CPU usage is live, monitor only |
-| GPU | Display adapter names from the registry. VRAM is not shown, because Windows does not report VRAM use without DirectX APIs |
+| GPU | Display adapter names from the registry |
+| VRAM | Total dedicated video memory of the largest dedicated adapter, from the registry. There is no usage gauge on Windows |
 | Memory, Swap, Disk | Physical memory; the page file as swap; the system drive |
 | Battery | The system power status. Absent on machines without a battery |
 | Resolution | Attached displays and their current modes |
 | Local IP | An up Ethernet or Wi-Fi adapter when there is one, otherwise another up adapter. Link-local `169.254.x.x` addresses are skipped |
-| WM | Always `Desktop Window Manager`, the compositor on Windows 8 and later |
+| WM | Always `DWM`, the Desktop Window Manager, the compositor on Windows 8 and later |
 | Packages | Scoop and Chocolatey counts, such as `34 (scoop), 12 (choco)`. Winget and Microsoft Store packages are not counted |
 | Shell, Terminal, Processes | One process list: the nearest known shell in the parent processes (PowerShell, Windows PowerShell, cmd, bash, zsh, fish, nu, elvish, xonsh), and the terminal that hosts it |
 
-These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, VRAM, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
+These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
 
-Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
+Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. If icons show as replacement glyphs there, set `layout.icons` to `false`. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
 
 ### Monitor
 

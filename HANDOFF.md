@@ -4,8 +4,10 @@ State of the v3 rewrite and the Windows port, written so work can continue from 
 
 ## Where things are
 
+- The project was renamed from atlasfetch to halofetch. The local checkout is still `D:\atlasfetch`; the branch name is unchanged.
 - Branch: `ccr-c9f6f9fa-40obji`, open as draft PR #2 against `main` (mafuzyk/halofetch).
 - Version: 3.0.0 (`Cargo.toml`, `flake.nix`).
+- The Rust toolchain (rustup, MSVC) is installed on the Windows machine, so the full gate runs there.
 - CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests and a release build on `ubuntu-latest` and `windows-latest`. Both were green on `4e148d0`.
 - `release.yml` builds Linux binaries and `x86_64-pc-windows-msvc` as a `.zip` with a `.sha256`.
 - User-facing docs: `README.md` (English). Technical guide: `DOCS.md` (Brazilian Portuguese by project convention; keep it in pt-BR).
@@ -17,6 +19,7 @@ State of the v3 rewrite and the Windows port, written so work can continue from 
 - Config is version 3. v1 and v2 files are migrated automatically on load; the original is kept as `.bak`, an unreadable file is moved aside as `.invalid`.
 - Windows is the same binary with full parity, including the monitor through ConPTY.
 - JSON output (`--format json`) is `schema_version` 2 with `system` and `gauges`.
+- The project and the binary are named `halofetch` (`halofetch.exe` on Windows). The configuration directory `atlasfetch` is moved to `halofetch` on first run, and `ATLASFETCH_SRC` is still read as a fallback for `HALOFETCH_SRC`.
 
 ## Architecture
 
@@ -66,19 +69,27 @@ On Windows itself the normal gate works as is.
 
 Tested on Windows 11 Pro 26H2, Windows Terminal, Windows PowerShell 5, Ryzen 5 5600GT.
 
-Fixed after that test (commits `9f6a698`, `9b56bbb`, not yet confirmed on the machine):
+Confirmed on the machine:
 
-1. `monitor`: the shell pane stayed blank and accepted no input. ConPTY sends a cursor position request (`ESC[6n`) at startup and draws nothing until it is answered. The PTY reader in `src/live.rs` now answers it from the vt100 cursor. Confirm a prompt appears and typing works in PowerShell, pwsh and cmd.
-2. GPU listed `Virtual Display Driver by MTT` next to the real GPU. Virtual adapters are now skipped (`is_virtual_adapter` in `src/info/windows/hardware.rs`).
+- The monitor prompt appears under ConPTY. Keyboard input is still to be confirmed by the user.
+- Virtual display adapters are no longer listed.
+
+Resolved:
+
+3. **Shell field missing.** Not a detection bug: the user's config had `shell` disabled. Detection was verified for pwsh, Windows PowerShell 5 and cmd.
+4. **Icons render as replacement glyphs.** Added `layout.icons` (default `true`); turn it off in the config or in the editor's Layout section.
+5. **Long values truncated.** WM is shown as `DWM`. CPU and GPU values are shortened before they are cut (`src/render/blocks.rs`).
+6. **Cascade looks like misalignment.** The default `layout.cascade` is now `0`.
+7. **Dashboard is static.** `halofetch fetch --watch` redraws the scene in place. `halofetch --scene dashboard` still prints once.
+8. **VRAM not reported.** VRAM shows the dedicated video memory total from the registry; there is no usage gauge on Windows.
+
+New fix: the monitor's shell pane border was misdrawn because empty vt100 cells were written as empty symbols. Fixed in `src/live.rs`.
 
 Still open:
 
-3. **Shell field missing.** `Terminal` showed `Windows Terminal` (from `WT_SESSION`), but `Shell` was absent, so the process-tree walk in `src/info/windows/process.rs` (`ProcTable::chain` from the parent of the current pid) returned no known shell. Get `halofetch --format json` and the parent chain from the machine (`Get-CimInstance Win32_Process` for the halofetch pid and its parents) before changing code. Possible fallback: when the chain has no known shell, use `PSModulePath`/`PROMPT` style environment hints (`pwsh` vs Windows PowerShell vs cmd).
-4. **Icons render as replacement glyphs** without a Nerd Font (the default Windows Terminal font has none of them). Consider a config option to turn icons off or to use plain Unicode symbols, and detect nothing automatically.
-5. **Long values truncated** in the classic scene at about 120 columns (`Desktop Window Manag…`, CPU and GPU names). Ideas: shorten the WM value to `DWM` on Windows (`DESKTOP_WINDOW_MANAGER` in `src/info/windows/mod.rs`), shorten GPU names (strip vendor suffixes), or let the composition move a long row to the side with more room.
-6. **Cascade looks like misalignment.** The classic scene steps rows inward (`layout.cascade`, default 2, in `src/render/scene.rs`), so pills are not in a straight column. On Windows it read as a bug. Consider default 0 or a clearer shape.
-7. **Dashboard is static.** `halofetch --scene dashboard` prints once and exits by design. Live updates are `halofetch monitor` (it accepts `--scene dashboard`). The user expected the dashboard to update; at least make this clear in the README, possibly add a hint line or a `--watch` flag on `fetch` that redraws in place without the shell.
-8. VRAM is not reported on Windows (registry `HardwareInformation.qwMemorySize` under the display class key is a candidate).
+- `fetch --watch` does not handle a scene taller than the terminal: the cursor cannot move above the top row, and old lines stay in the scrollback.
+- `NO_COLOR` is honoured by the monitor (through crossterm) but not by the static fetch on a terminal.
+- Existing config files keep their saved `cascade` value, so the new default only applies to new files.
 
 ## Conventions
 

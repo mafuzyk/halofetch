@@ -77,7 +77,7 @@ Comandos:
 
 | Comando | Efeito |
 |---|---|
-| `fetch` | Imprime uma renderização estática e encerra |
+| `fetch [-w] [-i MS]` | Imprime uma renderização estática e encerra. Com `-w` (`--watch`), redesenha a cena no lugar até `q`, `Esc` ou `Ctrl+C`; `-i` define o intervalo, de 100 a 60000 ms, e o padrão é `startup.interval_ms` |
 | `monitor [-i MS]` | Abre o workspace ao vivo; intervalo de 100 a 60000 ms, padrão `startup.interval_ms` |
 | `config [edit\|path\|reset]` | Abre o editor (padrão), mostra o caminho ou move o arquivo para `.bak` e abre o editor com os padrões |
 | `preset list` / `preset apply NOME` | Lista paletas embutidas e personalizadas; aplica uma delas a `colors.palette` e grava |
@@ -221,7 +221,7 @@ Os nomes legados aceitos em arquivos da versão 3 editados à mão são resolvid
 
 ### Local e caminhos
 
-Local padrão: `$XDG_CONFIG_HOME/halofetch/config.json`, ou `~/.config/halofetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. No Windows, o padrão é `%APPDATA%\halofetch\config.json`. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório.
+Local padrão: `$XDG_CONFIG_HOME/halofetch/config.json`, ou `~/.config/halofetch/config.json` quando `XDG_CONFIG_HOME` está ausente ou é relativo. No Windows, o padrão é `%APPDATA%\halofetch\config.json`. A opção `--config` substitui o arquivo para o processo inteiro. Os logos do usuário ficam no subdiretório `logos/` do diretório da configuração, e o logo colado pelo editor fica em `custom-logo.txt` nesse mesmo diretório. Na primeira execução sem `--config`, se o diretório `halofetch` não existe e o diretório irmão `atlasfetch` existe, este é movido para o novo nome com `rename`; se o `rename` falhar, o diretório é copiado e o original permanece, e uma cópia parcial é removida. A migração roda uma vez por processo e imprime uma linha em stderr. Falhas viram aviso e a execução segue.
 
 ### Esquema da versão 3
 
@@ -252,7 +252,8 @@ Config
 │   ├── style            "powerline" | "plain"
 │   ├── gap              3                    (0 a 20)
 │   ├── padding          2                    (0 a 20)
-│   ├── cascade          2                    (0 a 10)
+│   ├── cascade          0                    (0 a 10)
+│   ├── icons            true                 (desligue se os ícones aparecem como caracteres de substituição)
 │   ├── max_value_width  0                    (0 = sem limite; ou 8 a 200)
 │   ├── hide_empty       true
 │   └── color_blocks     true
@@ -347,6 +348,7 @@ Não são migrados: `panel.sep_color`, `panel.right_pad` e `separator.length`. A
 - `blocks::entries(ctx, lado)` monta as entradas habilitadas, na ordem de configuração. Uma entrada cujo valor não existe some quando `hide_empty` é verdadeiro; caso contrário mostra `n/a`.
 - A cor de cada entrada vem da posição entre todas as entradas habilitadas (painel esquerdo primeiro), ciclando pela paleta. Assim, a cor de um campo não muda entre cenas.
 - Uma linha de informação tem um custo fixo de colunas (`row_overhead`): no estilo `powerline` são `rótulo + 4` (mais o ícone e um espaço, quando existe); no `plain`, `rótulo + 2`. O valor recebe o que sobra e é cortado com reticências.
+- Para `cpu` e `gpu`, um valor que não cabe é encurtado antes de ser cortado. A CPU perde primeiro a frequência (` @ 3.59 GHz`) e depois a contagem de núcleos (` (12)`); a GPU perde as palavras `Corporation`, `Inc.` e `Series`. Só a primeira forma que cabe é usada.
 - Um valor com barra ocupa 10 células, um espaço e o texto.
 - Estilo `powerline`: o rótulo fica em um segmento colorido, seguido de uma seta (`U+E0B0`) e do valor. No painel esquerdo, o valor vem primeiro e a seta aponta para o rótulo (`U+E0B2`). Estilo `plain`: ícone e rótulo na cor da entrada, dois espaços e o valor; no painel esquerdo, valor, dois espaços e rótulo.
 - Os logos são escolhidos por `LogoSet::fitting(largura)`: o logo completo se cabe, senão a variante `_small`, se existir; senão nenhum.
@@ -554,17 +556,18 @@ As regras de detecção são as mesmas do Linux: cada detector devolve `None` em
 | `locale` | `GetUserDefaultLocaleName` |
 | `cpu` | `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0`: `ProcessorNameString` e `~MHz`; threads por `GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)` |
 | `cpu_usage` | Diferenças de `GetSystemTimes` pelo `CpuSampler`; somente no monitor |
-| `gpu` | Classe de adaptadores de vídeo `{4d36e968-e325-11ce-bfc1-08002be10318}`, subchaves chamadas `NNNN`, valor `DriverDesc`. Adaptadores básicos e remotos da Microsoft são ignorados. `vram` nunca é preenchido, porque o Windows não informa o uso de VRAM sem DXGI |
+| `gpu` | Classe de adaptadores de vídeo `{4d36e968-e325-11ce-bfc1-08002be10318}`, subchaves chamadas `NNNN`, valor `DriverDesc`. Adaptadores básicos e remotos da Microsoft são ignorados. |
+| `vram` | Total de memória dedicada do maior adaptador dedicado, em `HardwareInformation.qwMemorySize` (ou `MemorySize`) na mesma classe de vídeo. Sem medidor de uso |
 | `memory`, `swap` | `GlobalMemoryStatusEx`. Swap é o arquivo de paginação além da memória física, e fica ausente quando o arquivo de paginação está vazio |
 | `disk` | `GetDiskFreeSpaceExW` em `%SystemDrive%\`, ou `C:` quando a variável não está definida |
 | `battery` | `GetSystemPowerStatus`. Ausente sem bateria (flag 128) ou com nível desconhecido (255). O status é `Charging`, `Full` ou `Discharging` |
 | `resolution` | `EnumDisplayDevicesW` para os adaptadores ligados ao desktop, depois `EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS)`, formatado como `2560x1440 @ 144Hz` |
-| `wm` | Constante `Desktop Window Manager` |
+| `wm` | Constante `DWM` |
 | `local_ip` | `GetAdaptersAddresses` para IPv4, sem entradas anycast, multicast ou DNS. Somente adaptadores ativos, nunca loopback ou túnel. Ethernet (IfType 6) e Wi-Fi (71) têm prioridade; endereços link-local `169.254.0.0/16` são ignorados |
 | `packages` | Scoop: `%SCOOP%\apps`, senão `%USERPROFILE%\scoop\apps`, sem `scoop`. Chocolatey: `%ChocolateyInstall%\lib`, senão `C:\ProgramData\chocolatey\lib`. Winget e a Microsoft Store não são contados |
 | `processes`, `shell`, `terminal` | Uma passagem de `CreateToolhelp32Snapshot` sobre os processos, depois a cadeia de processos pais. Shells: `pwsh`, `powershell`, `cmd`, `nu`, `bash`, `zsh`, `fish`, `elvish`, `xonsh`. Terminais: dicas de ambiente como `WT_SESSION` e `ConEmuPID`, depois ancestrais como `WindowsTerminal`, `WezTerm`, `Alacritty`, `mintty`, `ConEmu` e `Code`, com `conhost` ou `OpenConsole` como último recurso |
 
-Não preenchidos no Windows: `de`, `font`, `flatpak`, `snap`, `cpu_temp`, `gpu_usage`, `vram`, `load`, `wifi` e `brightness`.
+Não preenchidos no Windows: `de`, `font`, `flatpak`, `snap`, `cpu_temp`, `gpu_usage`, `load`, `wifi` e `brightness`.
 
 A contagem de `packages` lista somente os gerenciadores com pelo menos um pacote, por exemplo `34 (scoop), 12 (choco)`.
 
@@ -584,7 +587,7 @@ As funções auxiliares puras em `info/windows/` têm testes unitários que roda
 
 `update::run`:
 
-1. localiza o checkout: `HALOFETCH_SRC` (valida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/halofetch`, `src/halofetch`, `halofetch`, `code/halofetch` e `dev/halofetch` dentro da home. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`;
+1. localiza o checkout: `HALOFETCH_SRC` (valida; `ATLASFETCH_SRC` é aceita quando a primeira não está definida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/halofetch`, `src/halofetch`, `halofetch`, `code/halofetch` e `dev/halofetch` dentro da home, seguidos dos mesmos nomes com `atlasfetch`. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`;
 2. recusa o checkout se `git status --porcelain` mostrar alterações;
 3. executa `git pull --rebase --autostash`, `cargo build --release --locked` e `install -m 755` para `~/.local/bin/halofetch`.
 
