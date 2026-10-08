@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 
-use crate::config::{self, Config, FieldEntry, InfoStyle, Scene, StartupMode};
+use crate::config::{self, Config, FieldEntry, IconSet, InfoStyle, Scene, StartupMode};
 use crate::field::{Field, FieldGroup};
 use crate::info::SysInfo;
 use crate::logo::{self, Logo, LogoSet, LogoSource};
@@ -170,7 +170,7 @@ impl Setting {
     pub const fn is_bool(self) -> bool {
         matches!(
             self,
-            Self::HideEmpty | Self::Icons | Self::ColorBlocks | Self::ShowTitle | Self::LogoCompact
+            Self::HideEmpty | Self::ColorBlocks | Self::ShowTitle | Self::LogoCompact
         )
     }
 
@@ -207,6 +207,7 @@ impl Setting {
                 | Self::Gradient
                 | Self::InfoStyle
                 | Self::Scene
+                | Self::Icons
                 | Self::Mode
                 | Self::LogoSource
         )
@@ -505,7 +506,12 @@ impl App {
                 width => width.to_string(),
             },
             Setting::HideEmpty => on_off(cfg.layout.hide_empty),
-            Setting::Icons => on_off(cfg.layout.icons),
+            Setting::Icons => match cfg.layout.icons {
+                IconSet::Nerd => "Nerd Font",
+                IconSet::Unicode => "Unicode",
+                IconSet::None => "Off",
+            }
+            .to_string(),
             Setting::ColorBlocks => on_off(cfg.layout.color_blocks),
             Setting::ShowTitle => on_off(cfg.title.enabled),
             Setting::TitleFormat => cfg.title.format.clone(),
@@ -1064,7 +1070,6 @@ impl App {
     fn toggle(&mut self, setting: Setting) {
         match setting {
             Setting::HideEmpty => self.cfg.layout.hide_empty = !self.cfg.layout.hide_empty,
-            Setting::Icons => self.cfg.layout.icons = !self.cfg.layout.icons,
             Setting::ColorBlocks => self.cfg.layout.color_blocks = !self.cfg.layout.color_blocks,
             Setting::ShowTitle => self.cfg.title.enabled = !self.cfg.title.enabled,
             Setting::LogoCompact => self.cfg.logo.auto_small = !self.cfg.logo.auto_small,
@@ -1092,6 +1097,17 @@ impl App {
                 let next = (current + i64::from(delta)).rem_euclid(scenes.len() as i64) as usize;
                 if let Some(scene) = scenes.get(next) {
                     self.cfg.scene = *scene;
+                }
+            }
+            Setting::Icons => {
+                let sets = IconSet::ALL;
+                let current = sets
+                    .iter()
+                    .position(|set| *set == self.cfg.layout.icons)
+                    .unwrap_or(0) as i64;
+                let next = (current + i64::from(delta)).rem_euclid(sets.len() as i64) as usize;
+                if let Some(set) = sets.get(next) {
+                    self.cfg.layout.icons = *set;
                 }
             }
             Setting::Mode => {
@@ -2167,7 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn icons_row_toggles_the_icon_setting() {
+    fn icons_row_cycles_the_icon_sets() {
         let mut app = new_app();
         enter_section(&mut app, Section::Layout);
         let row = app
@@ -2176,10 +2192,14 @@ mod tests {
             .position(|setting| *setting == Setting::Icons)
             .unwrap();
         app.set_form_row(Section::Layout, row);
-        press(&mut app, KeyCode::Char(' '));
-        assert!(!app.cfg.layout.icons);
-        press(&mut app, KeyCode::Char(' '));
-        assert!(app.cfg.layout.icons);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.cfg.layout.icons, IconSet::Unicode);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.cfg.layout.icons, IconSet::None);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.cfg.layout.icons, IconSet::Nerd);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.cfg.layout.icons, IconSet::None);
     }
 
     #[test]

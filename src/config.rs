@@ -117,6 +117,38 @@ pub enum InfoStyle {
     Plain,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IconSet {
+    #[default]
+    Nerd,
+    Unicode,
+    None,
+}
+
+impl IconSet {
+    pub const ALL: [IconSet; 3] = [IconSet::Nerd, IconSet::Unicode, IconSet::None];
+}
+
+/// `layout.icons` as written now, or as the boolean that older versions used.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum IconsWire {
+    Flag(bool),
+    Set(IconSet),
+}
+
+fn deserialize_icons<'de, D>(deserializer: D) -> Result<IconSet, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match IconsWire::deserialize(deserializer)? {
+        IconsWire::Flag(true) => IconSet::Nerd,
+        IconsWire::Flag(false) => IconSet::None,
+        IconsWire::Set(set) => set,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -173,7 +205,8 @@ pub struct Layout {
     /// 0 means unlimited; otherwise values are cut at this many columns.
     pub max_value_width: usize,
     pub hide_empty: bool,
-    pub icons: bool,
+    #[serde(deserialize_with = "deserialize_icons")]
+    pub icons: IconSet,
     pub color_blocks: bool,
 }
 
@@ -318,7 +351,7 @@ impl Default for Layout {
             cascade: 0,
             max_value_width: 0,
             hide_empty: true,
-            icons: true,
+            icons: IconSet::Nerd,
             color_blocks: true,
         }
     }
@@ -1401,7 +1434,7 @@ mod tests {
     }
 
     #[test]
-    fn current_file_without_icons_key_keeps_icons_on() {
+    fn current_file_without_icons_key_keeps_nerd_icons() {
         let scratch = Scratch::new("icons-default");
         let path = scratch.file("config.json");
         fs::write(&path, r#"{"version": 3, "layout": {"gap": 4}}"#).unwrap();
@@ -1409,7 +1442,42 @@ mod tests {
         let config = Config::load_from(&path).unwrap();
 
         assert_eq!(config.layout.gap, 4);
-        assert!(config.layout.icons);
+        assert_eq!(config.layout.icons, IconSet::Nerd);
+    }
+
+    #[test]
+    fn boolean_icons_setting_still_loads() {
+        let scratch = Scratch::new("icons-bool");
+        let path = scratch.file("config.json");
+        fs::write(&path, r#"{"version": 3, "layout": {"icons": true}}"#).unwrap();
+        let on = Config::load_from(&path).unwrap();
+        fs::write(&path, r#"{"version": 3, "layout": {"icons": false}}"#).unwrap();
+        let off = Config::load_from(&path).unwrap();
+
+        assert_eq!(on.layout.icons, IconSet::Nerd);
+        assert_eq!(off.layout.icons, IconSet::None);
+    }
+
+    #[test]
+    fn icon_set_name_loads_from_a_current_file() {
+        let scratch = Scratch::new("icons-name");
+        let path = scratch.file("config.json");
+        fs::write(&path, r#"{"version": 3, "layout": {"icons": "unicode"}}"#).unwrap();
+
+        let config = Config::load_from(&path).unwrap();
+
+        assert_eq!(config.layout.icons, IconSet::Unicode);
+    }
+
+    #[test]
+    fn saved_icon_set_is_written_as_a_string() {
+        let scratch = Scratch::new("icons-save");
+        let path = scratch.file("config.json");
+        Config::default().save_to(&path).unwrap();
+
+        let saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(saved["layout"]["icons"], "nerd");
     }
 
     #[test]

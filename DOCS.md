@@ -253,7 +253,7 @@ Config
 │   ├── gap              3                    (0 a 20)
 │   ├── padding          2                    (0 a 20)
 │   ├── cascade          0                    (0 a 10)
-│   ├── icons            true                 (desligue se os ícones aparecem como caracteres de substituição)
+│   ├── icons            "nerd" | "unicode" | "none"  (padrão "nerd"; "unicode" usa símbolos simples presentes em qualquer fonte, um por grupo de campos, para quando os ícones aparecem como caracteres de substituição; "none" não desenha ícones; true e false das versões anteriores continuam válidos)
 │   ├── max_value_width  0                    (0 = sem limite; ou 8 a 200)
 │   ├── hide_empty       true
 │   └── color_blocks     true

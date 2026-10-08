@@ -266,6 +266,19 @@ impl Field {
         }
     }
 
+    /// A plain symbol per group, for terminals without a Nerd Font.
+    pub const fn unicode_icon(self) -> &'static str {
+        match self.group() {
+            FieldGroup::System => "\u{25cf}",
+            FieldGroup::Software => "\u{25c6}",
+            FieldGroup::Desktop => "\u{25a0}",
+            FieldGroup::Hardware => "\u{25b2}",
+            FieldGroup::Resources => "\u{25c7}",
+            FieldGroup::Network => "\u{25cb}",
+            FieldGroup::Power => "\u{25a1}",
+        }
+    }
+
     /// One short sentence for the editor's add dialog.
     pub const fn description(self) -> &'static str {
         match self {
@@ -392,6 +405,20 @@ mod tests {
             assert!(!field.icon().is_empty(), "{}", field.key());
             assert!(!field.description().is_empty(), "{}", field.key());
             assert!(FieldGroup::ALL.contains(&field.group()));
+        }
+    }
+
+    #[test]
+    fn unicode_icons_are_single_characters_outside_private_use() {
+        for field in Field::ALL {
+            let mut chars = field.unicode_icon().chars();
+            let symbol = chars.next().unwrap();
+            assert!(chars.next().is_none(), "{}", field.key());
+            assert!(
+                !('\u{e000}'..='\u{f8ff}').contains(&symbol),
+                "{}",
+                field.key()
+            );
         }
     }
 

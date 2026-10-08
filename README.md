@@ -178,7 +178,7 @@ Choose one of the 27 built-in palettes, enter your own colors as `#RRGGBB` value
 
 The logo can be detected from your distribution, chosen from the 456 embedded logos, read from a file, or pasted. A pasted logo is saved as `custom-logo.txt` next to the configuration when you save. A file named after a logo in `logos/` inside the configuration directory replaces the embedded logo with the same name.
 
-Nerd Fonts are recommended for the default icons. The layout works without them. When icons show as replacement glyphs, which is the usual case with the default Windows Terminal font, set `"icons": false` in the `layout` section, or turn **Icons** off in the editor's Layout section.
+Nerd Fonts are recommended for the default icons. The layout works without them. When icons show as replacement glyphs, which is the usual case with the default Windows Terminal font, set `"icons": "unicode"` in the `layout` section to draw one plain symbol per field group instead, or `"icons": "none"` to draw no icons. The **Icons** row in the editor's Layout section cycles through the same three choices. Older `true` and `false` values still load as `"nerd"` and `"none"`.
 
 ### Configuration without fear
 
@@ -236,7 +236,7 @@ Minimal shape of the version 3 schema. Field entries are shown as two per panel;
     "gap": 3,
     "padding": 2,
     "cascade": 0,
-    "icons": true,
+    "icons": "nerd",
     "max_value_width": 0,
     "hide_empty": true,
     "color_blocks": true
@@ -416,7 +416,7 @@ The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` 
 
 These fields are Linux-only and stay hidden on Windows: Flatpak, Snap, Font, DE, CPU Temp, GPU Usage, Load, Wi-Fi and Brightness. Turn off **Hide empty fields** in the editor to show them as `n/a`.
 
-Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. If icons show as replacement glyphs there, set `layout.icons` to `false`. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
+Icons and powerline separators need a Nerd Font selected in your terminal. Windows Terminal is recommended because it draws the 24-bit colors of the themes. If icons show as replacement glyphs there, set `layout.icons` to `"unicode"` for plain symbols or to `"none"` to draw no icons. In the classic console, HaloFetch enables ANSI escape support at startup. If the console refuses it, static output is plain text.
 
 ### Monitor
 

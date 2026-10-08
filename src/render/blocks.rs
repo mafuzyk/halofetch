@@ -4,7 +4,7 @@
 //! row uses besides its value, and [`info_row`] draws exactly that many columns plus the
 //! (truncated) value, so the scenes can fit values without measuring rendered text.
 
-use crate::config::{FieldEntry, InfoStyle};
+use crate::config::{FieldEntry, IconSet, InfoStyle};
 use crate::field::Field;
 use crate::info::SysInfo;
 use crate::render::{text_width, truncate_text, Line, Span, Style};
@@ -107,16 +107,33 @@ fn entry_for(ctx: &RenderCtx, entry: &FieldEntry, index: usize) -> Option<Entry>
     };
     Some(Entry {
         field: entry.field,
-        icon: if ctx.cfg.layout.icons {
-            entry.icon.trim().to_string()
-        } else {
-            String::new()
-        },
+        icon: entry_icon(ctx.cfg.layout.icons, entry),
         label: entry.label.clone(),
         value,
         color: palette_color(&ctx.cfg.colors.palette, index),
         gauge,
     })
+}
+
+fn entry_icon(set: IconSet, entry: &FieldEntry) -> String {
+    let icon = entry.icon.trim();
+    match set {
+        IconSet::Nerd => icon.to_string(),
+        IconSet::None => String::new(),
+        IconSet::Unicode if icon.is_empty() => String::new(),
+        IconSet::Unicode if icon.chars().any(is_private_use) => {
+            entry.field.unicode_icon().to_string()
+        }
+        IconSet::Unicode => icon.to_string(),
+    }
+}
+
+/// Nerd Font glyphs live in the private use areas.
+fn is_private_use(c: char) -> bool {
+    matches!(
+        c,
+        '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}'
+    )
 }
 
 /// Palette color for position `index`, cycling through the palette.
@@ -743,8 +760,23 @@ mod tests {
         };
         assert!(cpu_row(&cfg).contains(icon));
 
-        cfg.layout.icons = false;
+        cfg.layout.icons = IconSet::None;
         assert!(!cpu_row(&cfg).contains(icon));
+
+        cfg.layout.icons = IconSet::Unicode;
+        let row = cpu_row(&cfg);
+        assert!(row.contains(Field::Cpu.unicode_icon()));
+        assert!(!row.contains(icon));
+
+        cfg.fields
+            .right
+            .iter_mut()
+            .find(|entry| entry.field == Field::Cpu)
+            .unwrap()
+            .icon = "x".to_string();
+        let shown = entries(&context(&info, &cfg, &logos), Side::Right);
+        let cpu = shown.iter().find(|item| item.field == Field::Cpu).unwrap();
+        assert_eq!(cpu.icon, "x");
     }
 
     #[test]
