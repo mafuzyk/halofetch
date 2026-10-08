@@ -673,7 +673,8 @@ mod tests {
     #[test]
     fn classic_places_the_logo_between_two_panels() {
         let info = SysInfo::sample();
-        let cfg = Config::default();
+        let mut cfg = Config::default();
+        cfg.layout.cascade = 2;
         let text = render_plain(Scene::Classic, &cfg, &info, &test_logos(), 140);
         let joined = text.lines().any(|line| {
             let Some(glyph) = line.find('#') else {
@@ -689,6 +690,7 @@ mod tests {
         let mut info = SysInfo::sample();
         info.set(Field::Os, "Ubuntu 24.04.5 LTS");
         let mut cfg = Config::default();
+        cfg.layout.cascade = 2;
         cfg.fields
             .right
             .retain(|entry| entry.field == Field::Uptime);
@@ -704,7 +706,8 @@ mod tests {
     #[test]
     fn classic_stays_joined_and_centered_when_panels_shrink() {
         let info = SysInfo::sample();
-        let cfg = Config::default();
+        let mut cfg = Config::default();
+        cfg.layout.cascade = 2;
         let bar = "#".repeat(50);
         let logos = LogoSet {
             full: Logo::from_text(&format!("{bar}\n{bar}\n{bar}")),

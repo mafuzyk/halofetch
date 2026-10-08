@@ -315,7 +315,7 @@ impl Default for Layout {
             style: InfoStyle::default(),
             gap: 3,
             padding: 2,
-            cascade: 2,
+            cascade: 0,
             max_value_width: 0,
             hide_empty: true,
             icons: true,
