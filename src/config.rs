@@ -173,6 +173,7 @@ pub struct Layout {
     /// 0 means unlimited; otherwise values are cut at this many columns.
     pub max_value_width: usize,
     pub hide_empty: bool,
+    pub icons: bool,
     pub color_blocks: bool,
 }
 
@@ -317,6 +318,7 @@ impl Default for Layout {
             cascade: 2,
             max_value_width: 0,
             hide_empty: true,
+            icons: true,
             color_blocks: true,
         }
     }
@@ -1329,6 +1331,18 @@ mod tests {
 
         assert_eq!(config.startup.interval_ms, MIN_INTERVAL_MS);
         assert!(path.exists());
+    }
+
+    #[test]
+    fn current_file_without_icons_key_keeps_icons_on() {
+        let scratch = Scratch::new("icons-default");
+        let path = scratch.file("config.json");
+        fs::write(&path, r#"{"version": 3, "layout": {"gap": 4}}"#).unwrap();
+
+        let config = Config::load_from(&path).unwrap();
+
+        assert_eq!(config.layout.gap, 4);
+        assert!(config.layout.icons);
     }
 
     #[test]

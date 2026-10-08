@@ -119,6 +119,7 @@ pub enum Setting {
     Cascade,
     MaxValueWidth,
     HideEmpty,
+    Icons,
     ColorBlocks,
     ShowTitle,
     TitleFormat,
@@ -151,6 +152,7 @@ impl Setting {
             Self::Cascade => "Cascade",
             Self::MaxValueWidth => "Max value width",
             Self::HideEmpty => "Hide empty fields",
+            Self::Icons => "Icons",
             Self::ColorBlocks => "Color blocks",
             Self::ShowTitle => "Show title",
             Self::TitleFormat => "Title format",
@@ -168,7 +170,7 @@ impl Setting {
     pub const fn is_bool(self) -> bool {
         matches!(
             self,
-            Self::HideEmpty | Self::ColorBlocks | Self::ShowTitle | Self::LogoCompact
+            Self::HideEmpty | Self::Icons | Self::ColorBlocks | Self::ShowTitle | Self::LogoCompact
         )
     }
 
@@ -503,6 +505,7 @@ impl App {
                 width => width.to_string(),
             },
             Setting::HideEmpty => on_off(cfg.layout.hide_empty),
+            Setting::Icons => on_off(cfg.layout.icons),
             Setting::ColorBlocks => on_off(cfg.layout.color_blocks),
             Setting::ShowTitle => on_off(cfg.title.enabled),
             Setting::TitleFormat => cfg.title.format.clone(),
@@ -560,6 +563,7 @@ impl App {
                 Setting::Cascade,
                 Setting::MaxValueWidth,
                 Setting::HideEmpty,
+                Setting::Icons,
                 Setting::ColorBlocks,
                 Setting::ShowTitle,
                 Setting::TitleFormat,
@@ -1060,6 +1064,7 @@ impl App {
     fn toggle(&mut self, setting: Setting) {
         match setting {
             Setting::HideEmpty => self.cfg.layout.hide_empty = !self.cfg.layout.hide_empty,
+            Setting::Icons => self.cfg.layout.icons = !self.cfg.layout.icons,
             Setting::ColorBlocks => self.cfg.layout.color_blocks = !self.cfg.layout.color_blocks,
             Setting::ShowTitle => self.cfg.title.enabled = !self.cfg.title.enabled,
             Setting::LogoCompact => self.cfg.logo.auto_small = !self.cfg.logo.auto_small,
@@ -2159,6 +2164,22 @@ mod tests {
         assert_eq!(step_interval(5_500, -1), 5_000);
         assert_eq!(step_interval(100, -1), 100);
         assert_eq!(step_interval(60_000, 1), 60_000);
+    }
+
+    #[test]
+    fn icons_row_toggles_the_icon_setting() {
+        let mut app = new_app();
+        enter_section(&mut app, Section::Layout);
+        let row = app
+            .section_rows(Section::Layout)
+            .iter()
+            .position(|setting| *setting == Setting::Icons)
+            .unwrap();
+        app.set_form_row(Section::Layout, row);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(!app.cfg.layout.icons);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(app.cfg.layout.icons);
     }
 
     #[test]

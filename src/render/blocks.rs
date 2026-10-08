@@ -107,7 +107,11 @@ fn entry_for(ctx: &RenderCtx, entry: &FieldEntry, index: usize) -> Option<Entry>
     };
     Some(Entry {
         field: entry.field,
-        icon: entry.icon.trim().to_string(),
+        icon: if ctx.cfg.layout.icons {
+            entry.icon.trim().to_string()
+        } else {
+            String::new()
+        },
         label: entry.label.clone(),
         value,
         color: palette_color(&ctx.cfg.colors.palette, index),
@@ -636,6 +640,23 @@ mod tests {
         assert!(shown
             .iter()
             .all(|item| item.value == "n/a" && item.gauge.is_none()));
+    }
+
+    #[test]
+    fn icons_are_drawn_unless_turned_off() {
+        let info = SysInfo::sample();
+        let mut cfg = Config::default();
+        let logos = LogoSet::default();
+        let icon = Field::Cpu.icon();
+        let cpu_row = |cfg: &Config| {
+            let shown = entries(&context(&info, cfg, &logos), Side::Right);
+            let cpu = shown.iter().find(|item| item.field == Field::Cpu).unwrap();
+            info_row(cpu, InfoStyle::Plain, false, 3, 40, Color::WHITE).plain_text()
+        };
+        assert!(cpu_row(&cfg).contains(icon));
+
+        cfg.layout.icons = false;
+        assert!(!cpu_row(&cfg).contains(icon));
     }
 
     #[test]
