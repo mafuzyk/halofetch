@@ -193,8 +193,64 @@ fn fit_text(text: &str, width: usize, align: Align) -> String {
     }
 }
 
-fn value_text(entry: &Entry, color: Color) -> Line {
-    let text = Span::new(entry.value.clone(), Style::new().fg(color));
+/// Shorter spellings of a value, tried in order when the value does not fit its columns.
+fn compact_forms(field: Field, value: &str) -> Vec<String> {
+    match field {
+        Field::Cpu => cpu_forms(value),
+        Field::Gpu => {
+            let short = value
+                .split_whitespace()
+                .filter(|word| !matches!(*word, "Corporation" | "Inc." | "Series"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if short == value {
+                Vec::new()
+            } else {
+                vec![short]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn cpu_forms(value: &str) -> Vec<String> {
+    let mut forms = Vec::new();
+    let base = match value.rfind(" @ ") {
+        Some(at) => {
+            let base = value[..at].to_string();
+            forms.push(base.clone());
+            base
+        }
+        None => value.to_string(),
+    };
+    if let Some(bare) = strip_core_count(&base) {
+        forms.push(bare.to_string());
+    }
+    forms
+}
+
+/// `text` without a trailing core count such as " (12)", if it has one.
+fn strip_core_count(text: &str) -> Option<&str> {
+    let body = text.strip_suffix(')')?;
+    let open = body.rfind(" (")?;
+    let digits = &body[open + 2..];
+    (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())).then(|| &text[..open])
+}
+
+/// The value as it should be drawn in `width` columns: unchanged when it fits, else the first
+/// shorter form that fits, else unchanged so that the caller cuts it.
+fn fit_value(field: Field, value: &str, width: usize) -> String {
+    if text_width(value) <= width {
+        return value.to_string();
+    }
+    compact_forms(field, value)
+        .into_iter()
+        .find(|form| text_width(form) <= width)
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn value_text(entry: &Entry, text: &str, color: Color) -> Line {
+    let text = Span::new(text, Style::new().fg(color));
     match entry.gauge {
         Some(ratio) => {
             let mut line = bar(ratio, ROW_BAR_CELLS, entry.field == Field::Battery);
@@ -221,7 +277,11 @@ pub fn info_row(
 ) -> Line {
     let icon = shown_icon(&entry.icon);
     let color = entry.color;
-    let value = value_text(entry, value_color).truncated(value_w);
+    let text = match entry.gauge {
+        Some(_) => entry.value.clone(),
+        None => fit_value(entry.field, &entry.value, value_w),
+    };
+    let value = value_text(entry, &text, value_color).truncated(value_w);
     let label_style = Style::new().fg(color).bold();
     let mut line = Line::new();
     match (style, mirrored) {
@@ -503,6 +563,34 @@ mod tests {
         let row = info_row(&item, InfoStyle::Plain, false, 3, 5, Color::WHITE);
         assert_eq!(row.plain_text(), "Mem  1");
         assert_eq!(row_overhead(InfoStyle::Plain, 3, 0), 5);
+    }
+
+    #[test]
+    fn cpu_value_loses_frequency_and_core_count_before_it_is_cut() {
+        let value = "AMD Ryzen 5 5600GT (12) @ 3.59 GHz";
+        assert_eq!(
+            compact_forms(Field::Cpu, value),
+            ["AMD Ryzen 5 5600GT (12)", "AMD Ryzen 5 5600GT"]
+        );
+        assert_eq!(fit_value(Field::Cpu, value, 60), value);
+        assert_eq!(fit_value(Field::Cpu, value, 23), "AMD Ryzen 5 5600GT (12)");
+        assert_eq!(fit_value(Field::Cpu, value, 18), "AMD Ryzen 5 5600GT");
+        assert_eq!(fit_value(Field::Cpu, value, 10), value);
+
+        let mut item = entry("", "CPU", value, None);
+        item.field = Field::Cpu;
+        let row = info_row(&item, InfoStyle::Plain, false, 3, 23, Color::WHITE);
+        assert_eq!(row.plain_text(), "CPU  AMD Ryzen 5 5600GT (12)");
+    }
+
+    #[test]
+    fn compact_forms_cover_only_cpu_and_gpu_values() {
+        assert!(compact_forms(Field::Memory, "6.21 GiB @ 3.59 GHz (12)").is_empty());
+        assert_eq!(
+            compact_forms(Field::Gpu, "AMD Corporation Radeon Series"),
+            ["AMD Radeon"]
+        );
+        assert!(compact_forms(Field::Gpu, "AMD Radeon").is_empty());
     }
 
     #[test]
