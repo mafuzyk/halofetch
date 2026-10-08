@@ -5,6 +5,7 @@ mod desktop;
 mod hardware;
 mod network;
 mod packages;
+mod perf;
 mod power;
 mod process;
 mod registry;
@@ -14,7 +15,7 @@ use crate::field::Field;
 
 use super::{
     format_bytes, format_bytes_pair, format_percent, format_uptime, put, Battery, CpuSampler,
-    SysInfo,
+    SysInfo, Usage,
 };
 
 pub(super) use hardware::cpu_totals;
@@ -54,7 +55,21 @@ pub(super) fn collect(info: &mut SysInfo) {
         info.gauges.battery = battery.as_ref().map(|battery| battery.level);
         put(info, Field::Battery, battery.as_ref().map(Battery::text));
         put(info, Field::Gpu, hardware::gpu_name());
-        put(info, Field::Vram, hardware::vram_total().map(format_bytes));
+        let vram = hardware::vram_total();
+        let vram_usage = vram.and_then(|total| {
+            perf::dedicated_vram_used().map(|used| Usage {
+                used: used.min(total),
+                total,
+            })
+        });
+        info.gauges.vram = vram_usage;
+        put(
+            info,
+            Field::Vram,
+            vram_usage
+                .map(format_bytes_pair)
+                .or_else(|| vram.map(format_bytes)),
+        );
         put(info, Field::Resolution, desktop::resolution());
         put(info, Field::LocalIp, network::local_ip());
         put(info, Field::Wm, Some(DESKTOP_WINDOW_MANAGER));
