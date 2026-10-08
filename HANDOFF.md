@@ -8,7 +8,7 @@ State of the v3 rewrite and the Windows port, written so work can continue from 
 - Branch: `ccr-c9f6f9fa-40obji`, open as draft PR #2 against `main` (mafuzyk/halofetch).
 - Version: 3.0.0 (`Cargo.toml`, `flake.nix`).
 - The Rust toolchain (rustup, MSVC) is installed on the Windows machine, so the full gate runs there.
-- CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests and a release build on `ubuntu-latest` and `windows-latest`. Both were green on `4e148d0`.
+- CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests and a release build on `ubuntu-latest` and `windows-latest`. Both were green before the halofetch rename; the branch history was rewritten since, so older commit hashes no longer match.
 - `release.yml` builds Linux binaries and `x86_64-pc-windows-msvc` as a `.zip` with a `.sha256`.
 - User-facing docs: `README.md` (English). Technical guide: `DOCS.md` (Brazilian Portuguese by project convention; keep it in pt-BR).
 
