@@ -42,7 +42,7 @@ Objetivos da versão 3:
 | `src/live.rs` | Workspace ao vivo: PTY, shell, parser VT100 e atualização das métricas |
 | `src/output.rs` | Saída JSON, esquema versão 2 |
 | `src/benchmark.rs` | Medição da coleta e da renderização completa |
-| `src/update.rs` | Atualização a partir de um checkout Git |
+| `src/update.rs` | Atualização pelo checkout Git ou pelo binário do último release |
 | `build.rs` | Copia `logos/` para o diretório de saída e gera a tabela de logos incorporados |
 
 ## Fluxo de execução
@@ -83,7 +83,7 @@ Comandos:
 | `preset list` / `preset apply NOME` | Lista paletas embutidas e personalizadas; aplica uma delas a `colors.palette` e grava |
 | `logos list` / `logos show [CHAVE]` | Lista as chaves; mostra um logo colorido pela paleta atual (sem chave, o logo configurado para esta máquina) |
 | `benchmark [-n N]` | Mede N execuções (1 a 100, padrão 5) |
-| `update` | Atualiza o checkout e reinstala |
+| `update` | Atualiza pelo checkout ou baixa o binário do último release |
 
 Opções globais, aceitas antes ou depois do comando:
 
@@ -581,19 +581,30 @@ O editor trata `KeyEventKind::Release` como não sendo um pressionamento de tecl
 
 ### Testes
 
-As funções auxiliares puras em `info/windows/` têm testes unitários que rodam no job de CI do Windows. Chamadas Win32 apenas verificam que não entram em pânico. As funções auxiliares em `live.rs` (`windows_shell`, `windows_shell_args`) e `update.rs` (`on_path`) são compiladas e testadas em todas as plataformas.
+As funções auxiliares puras em `info/windows/` têm testes unitários que rodam no job de CI do Windows. Chamadas Win32 apenas verificam que não entram em pânico. As funções auxiliares em `live.rs` (`windows_shell`, `windows_shell_args`) e `update.rs` (`on_path`, `parse_release`, `expected_checksum` e `archive_name`) são compiladas e testadas em todas as plataformas.
 
 ## Atualizador
 
-`update::run`:
+`update::run(release)` segue o caminho de checkout quando `find_source_dir` encontra um e `--release` não foi passado; nos outros casos segue o caminho de release.
 
-1. localiza o checkout: `HALOFETCH_SRC` (valida; `ATLASFETCH_SRC` é aceita quando a primeira não está definida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/halofetch`, `src/halofetch`, `halofetch`, `code/halofetch` e `dev/halofetch` dentro da home, seguidos dos mesmos nomes com `atlasfetch`. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`;
+Com checkout:
+
+1. localiza o checkout: `HALOFETCH_SRC` (valida; `ATLASFETCH_SRC` é aceita quando a primeira não está definida), depois o diretório atual, os ancestrais do executável (até cinco níveis) e, por último, `Projetos/halofetch`, `src/halofetch`, `halofetch`, `code/halofetch` e `dev/halofetch` dentro da home, seguidos dos mesmos nomes com `atlasfetch`. Um checkout válido tem `.git`, `Cargo.toml` e `src/main.rs`. Se nenhum candidato for válido, `find_source_dir` retorna `None`. Um `HALOFETCH_SRC` inválido é erro, sem volta silenciosa ao caminho de release;
 2. recusa o checkout se `git status --porcelain` mostrar alterações;
 3. executa `git pull --rebase --autostash`, `cargo build --release --locked` e `install -m 755` para `~/.local/bin/halofetch`.
 
-Se qualquer passo falha, o comando para com o motivo. Releases empacotadas não usam esse caminho.
+Sem checkout (ou com `--release`):
 
-No Windows, o passo 3 gera `target\release\halofetch.exe` e o instala em `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. O executável em uso é renomeado para `halofetch.exe.old` antes da cópia, e o `.old` anterior é removido na atualização seguinte (melhor esforço). Se a pasta de instalação não estiver no `PATH`, a atualização imprime a instrução para adicioná-la.
+1. alvo: `x86_64-unknown-linux-musl` no Linux x86_64 e `x86_64-pc-windows-msvc` no Windows x86_64. Em outros sistemas o comando para com erro, sem tentar nada;
+2. consulta `https://api.github.com/repos/mafuzyk/halofetch/releases/latest` com `curl`. Dela saem `tag_name` e os assets `halofetch-<tag>-<alvo>.tar.gz` (`.zip` no Windows) e o `.sha256` correspondente; se `curl` não puder ser executado, o comando indica que ele é necessário, e um asset ausente é erro que cita o arquivo;
+3. compara `tag_name` com `CARGO_PKG_VERSION`, ignorando o `v` inicial. Se forem iguais, imprime que a versão já é a mais recente e termina sem baixar nada;
+4. recusa o executável atual se o caminho canônico estiver em `/nix/store`, indicando que a atualização deve ser feita pelo Nix;
+5. baixa o arquivo e o `.sha256` para um diretório temporário (`halofetch-update-<pid>` no diretório temporário do sistema), que é removido ao final, com sucesso ou com erro;
+6. confere o SHA-256 do arquivo com `sha2`. Se a primeira palavra do `.sha256` não for um hash de 64 dígitos hexadecimais, o comando para com erro de checksum inválido; se o hash for diferente, para com erro de divergência, e nada é instalado;
+7. extrai com `tar` (`-xzf` no Linux; `-xf` no Windows, que lê zip) e exige o executável no diretório extraído;
+8. substitui o executável atual pelo canônico. No Linux, copia o novo binário para `.halofetch.new` na mesma pasta, define permissão `0755` e o renomeia sobre o original; sem permissão de escrita na pasta, o comando indica que é preciso permissão para essa pasta ou reinstalar manualmente. No Windows, renomeia o executável em uso para `halofetch.exe.old` e copia o novo, como no caminho de checkout.
+
+No Windows, o caminho de checkout gera `target\release\halofetch.exe` e o instala em `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. Nos dois caminhos, o executável em uso é renomeado para `halofetch.exe.old` antes da cópia, e o `.old` anterior é removido na atualização seguinte (melhor esforço). Se a pasta de instalação não estiver no `PATH`, a atualização imprime a instrução para adicioná-la.
 
 ## Qualidade e CI
 

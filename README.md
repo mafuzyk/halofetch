@@ -306,11 +306,27 @@ The setup editor is the recommended way to edit the file. See [DOCS.md](DOCS.md)
 | `halofetch logos show` | Print the logo this machine's configuration selects, colored with the palette |
 | `halofetch logos show arch` | Print one logo colored with the palette |
 | `halofetch benchmark` | Measure information collection and the full render (`-n` sets the runs, 5 by default) |
-| `halofetch update` | Pull, rebuild and install from the source checkout |
+| `halofetch update` | Update from the source checkout, or install the latest release binary (`--release` forces the download) |
 
 `--scene`, `--format` and `-c, --config PATH` work before or after the command. `halofetch --help` is the authoritative reference.
 
 ## Installation
+
+### Prebuilt binaries
+
+Each release publishes a static Linux binary (`x86_64-unknown-linux-musl`, runs on any distribution), a glibc build (`x86_64-unknown-linux-gnu`) and a Windows build, each with a `.sha256` file, on the [release page](https://github.com/mafuzyk/halofetch/releases/latest).
+
+```bash
+version=v3.1.0
+archive=halofetch-$version-x86_64-unknown-linux-musl.tar.gz
+curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive"
+curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive.sha256"
+sha256sum -c "$archive.sha256"
+tar -xzf "$archive"
+install -Dm755 halofetch ~/.local/bin/halofetch
+```
+
+Make sure `~/.local/bin` is in `PATH`. For Windows, see [Windows](#windows).
 
 ### Build from source
 
@@ -330,13 +346,13 @@ nix run github:mafuzyk/halofetch
 nix profile install github:mafuzyk/halofetch
 ```
 
-### Update a source installation
+### Update
 
 ```bash
 halofetch update
 ```
 
-The updater refuses a checkout with local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked`, and installs to `~/.local/bin/halofetch` (on Windows, see [Windows](#windows)). It finds the checkout through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory. Set `HALOFETCH_SRC=/path/to/halofetch` to choose one explicitly. `ATLASFETCH_SRC` is used when `HALOFETCH_SRC` is not set.
+`halofetch update` checks for a source checkout first through `HALOFETCH_SRC`, the current directory, the directories around the executable, or a few common paths under the home directory (`ATLASFETCH_SRC` is used when `HALOFETCH_SRC` is not set). With a checkout it refuses local changes, runs `git pull --rebase --autostash`, builds with `cargo build --release --locked` and installs to `~/.local/bin/halofetch`. Without one, or with `--release`, it asks GitHub for the latest release, downloads the archive for this platform with `curl`, checks it against the published SHA-256, extracts it with `tar` and replaces the running executable in place. It does nothing when the installed version is already the latest, and refuses a copy managed by Nix. Prebuilt binaries exist for x86_64 Linux and Windows.
 
 ### Start with your shell
 
@@ -374,7 +390,7 @@ HaloFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program
 Download `halofetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\halofetch-v3.0.0-x86_64-pc-windows-msvc.zip
+Get-FileHash -Algorithm SHA256 .\halofetch-v3.1.0-x86_64-pc-windows-msvc.zip
 ```
 
 Extract `halofetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
@@ -395,7 +411,7 @@ The configuration is `%APPDATA%\halofetch\config.json`. `halofetch config path` 
 
 ### Updating
 
-`halofetch update` needs a source checkout, with `git` and `cargo` on `PATH`. It builds `target\release\halofetch.exe` and installs it to `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`. Windows does not let a running program be overwritten, so the installed copy is renamed to `halofetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add. Release archives are not updated by this command; replace `halofetch.exe` yourself.
+`halofetch update` downloads the latest release and replaces `halofetch.exe` where it is installed (it uses `curl.exe` and `tar.exe`, included in Windows 10 and 11). With a source checkout (`git` and `cargo` on `PATH`) it builds instead and installs to `%LOCALAPPDATA%\Programs\halofetch\halofetch.exe`; `--release` forces the download. Windows does not let a running program be overwritten, so the installed copy is renamed to `halofetch.exe.old` first, and that file is removed by the next update. When the install folder is not on `PATH`, the update prints the line to add.
 
 ### What is shown
 
@@ -502,7 +518,7 @@ Important modules:
 | `src/live.rs` | Monitor workspace: PTY shell and VT100 rendering |
 | `src/output.rs` | JSON output, schema version 2 |
 | `src/benchmark.rs` | Timing of collection and rendering |
-| `src/update.rs` | Updater for source checkouts |
+| `src/update.rs` | Updater: source checkouts, or the latest release binary |
 | `build.rs` | Embeds the `logos/` directory in the binary |
 
 CI runs clippy, the tests and the release build on Ubuntu and Windows. The formatting check runs on Ubuntu.
