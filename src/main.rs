@@ -83,7 +83,7 @@ fn run_command(args: &Args, command: &Command) -> Result<()> {
             let cfg = Config::load()?;
             benchmark::run(&cfg, scene_for(args, &cfg), *iterations)
         }
-        Command::Update => update::run(),
+        Command::Update { release } => update::run(*release),
     }
 }
 
@@ -103,7 +103,7 @@ fn run_default(args: &Args) -> Result<()> {
         return apply_preset(name);
     }
     if args.update {
-        return update::run();
+        return update::run(false);
     }
     if args.just_ascii {
         return show_logo(None);

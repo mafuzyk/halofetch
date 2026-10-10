@@ -52,8 +52,12 @@ pub enum Command {
         #[arg(short = 'n', long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..=100))]
         iterations: u16,
     },
-    /// Pull, rebuild, and install from the source checkout
-    Update,
+    /// Update from the source checkout, or download the latest release binary
+    Update {
+        /// Download the latest release binary even when a source checkout is found
+        #[arg(long)]
+        release: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

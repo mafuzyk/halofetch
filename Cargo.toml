@@ -25,6 +25,7 @@ unicode-width = "0.2"
 regex = "1"
 portable-pty = "0.9.0"
 vt100 = { version = "0.15.2", package = "vt100" }
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
