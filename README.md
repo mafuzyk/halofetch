@@ -317,7 +317,7 @@ The setup editor is the recommended way to edit the file. See [DOCS.md](DOCS.md)
 Each release publishes a static Linux binary (`x86_64-unknown-linux-musl`, runs on any distribution), a glibc build (`x86_64-unknown-linux-gnu`) and a Windows build, each with a `.sha256` file, on the [release page](https://github.com/mafuzyk/halofetch/releases/latest).
 
 ```bash
-version=v3.0.0
+version=v3.1.0
 archive=halofetch-$version-x86_64-unknown-linux-musl.tar.gz
 curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive"
 curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive.sha256"
@@ -390,7 +390,7 @@ HaloFetch runs on Windows 10 and 11 as a native `x86_64-pc-windows-msvc` program
 Download `halofetch-v<version>-x86_64-pc-windows-msvc.zip` and its `.sha256` file from the release page. Check the archive against the published hash:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\halofetch-v3.0.0-x86_64-pc-windows-msvc.zip
+Get-FileHash -Algorithm SHA256 .\halofetch-v3.1.0-x86_64-pc-windows-msvc.zip
 ```
 
 Extract `halofetch.exe` from the archive into a folder on your `PATH`. The archive also contains `LICENSE` and `README.md`.
