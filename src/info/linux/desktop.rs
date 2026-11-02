@@ -55,7 +55,7 @@ const WM_PROCESSES: [(&str, &str); 28] = [
 ];
 
 /// Desktop environment processes in priority order.
-const DE_PROCESSES: [(&str, &str); 11] = [
+const DE_PROCESSES: [(&str, &str); 12] = [
     ("gnome-shell", "GNOME"),
     ("plasmashell", "KDE Plasma"),
     ("xfce4-session", "Xfce"),
@@ -63,6 +63,8 @@ const DE_PROCESSES: [(&str, &str); 11] = [
     ("mate-session", "MATE"),
     ("lxqt-session", "LXQt"),
     ("budgie-panel", "Budgie"),
+    // Leviathan runs on cosmic-comp, so its shell decides first.
+    ("leviathan-shell", "Leviathan"),
     ("cosmic-comp", "COSMIC"),
     ("lxpanel", "LXDE"),
     ("enlightenment", "Enlightenment"),
@@ -243,6 +245,7 @@ fn normalize_desktop(item: &str) -> Option<&'static str> {
         "deepin" => "Deepin",
         "pantheon" => "Pantheon",
         "cosmic" => "COSMIC",
+        "leviathan" => "Leviathan",
         "unity" => "Unity",
         "enlightenment" => "Enlightenment",
         _ => return None,
@@ -465,6 +468,18 @@ mod tests {
 
         let env = env_from(&[]);
         assert_eq!(de_from(env, &["bash"]), None);
+    }
+
+    #[test]
+    fn leviathan_is_found_before_the_cosmic_compositor_it_runs_on() {
+        let env = env_from(&[("XDG_CURRENT_DESKTOP", "Leviathan")]);
+        assert_eq!(de_from(env, &["cosmic-comp"]), Some("Leviathan"));
+
+        let env = env_from(&[]);
+        assert_eq!(
+            de_from(env, &["cosmic-comp", "leviathan-shell"]),
+            Some("Leviathan")
+        );
     }
 
     #[test]
