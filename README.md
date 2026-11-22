@@ -87,6 +87,53 @@ nix profile install github:mafuzyk/halofetch
 
 The flake exposes the package and can be added to a NixOS or Home Manager configuration. Nix installs are managed by Nix, so `halofetch update` refuses to replace the binary.
 
+<details>
+<summary>NixOS module, Home Manager module and development shell</summary>
+
+The NixOS module installs the package without touching any user's shell configuration:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    halofetch.url = "github:mafuzyk/halofetch";
+  };
+
+  outputs = { nixpkgs, halofetch, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        halofetch.nixosModules.default
+        { programs.halofetch.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+The Home Manager module installs the package and leaves the configuration file and shell hooks alone:
+
+```nix
+{
+  imports = [ halofetch.homeManagerModules.default ];
+  programs.halofetch.enable = true;
+}
+```
+
+Both modules also accept `programs.halofetch.package` to build from another source. Use `halofetch init fish` (or bash, zsh, sharky) for an interactive startup hook, and `halofetch config` for the configuration file.
+
+For local work:
+
+```bash
+nix develop
+nix build .#halofetch
+nix run .#halofetch -- fetch
+```
+
+The package installs `LICENSE`, `THIRD_PARTY_NOTICES.md`, `README.md`, `DOCS.md` and `logos/README.md` under `share` for packaging and license compliance.
+
+</details>
+
 ### Prebuilt binary
 
 Each release publishes a static musl build (`x86_64-unknown-linux-musl`), a glibc build (`x86_64-unknown-linux-gnu`) and a Windows archive, each with a SHA-256 file:

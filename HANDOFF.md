@@ -5,9 +5,10 @@ State of the project, written so work can continue from a fresh session.
 ## Where things are
 
 - The project was renamed from atlasfetch to halofetch. Development happens on `main` (mafuzyk/halofetch).
-- Version: see `Cargo.toml`, `flake.nix` and `packaging/aur/PKGBUILD`, which move together.
+- Version: see `Cargo.toml` (the Nix package reads it) and `packaging/aur/PKGBUILD`, which move together.
 - The Rust toolchain (rustup, MSVC) is installed on the Windows machine, so the full gate runs there.
 - CI (`.github/workflows/ci.yml`) runs fmt, clippy, tests and a release build on `ubuntu-latest` and `windows-latest`, `cargo audit`, and the Nix flake.
+- `flake.nix` exposes the package, `devShells`, `nixosModules` and `homeManagerModules`; the modules install the package without editing user shell files.
 - `release.yml` builds Linux binaries and `x86_64-pc-windows-msvc` as a `.zip` with a `.sha256`.
 - User-facing docs: `README.md` (English). Technical guide: `DOCS.md` (Brazilian Portuguese by project convention; keep it in pt-BR).
 

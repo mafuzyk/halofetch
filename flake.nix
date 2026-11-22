@@ -1,45 +1,57 @@
 {
-  description = "A configurable fetch tool — centered ASCII art with powerline panels";
+  description = "A configurable system fetch with centered ASCII art and powerline panels";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "halofetch";
-          version = "3.3.0";
-          src = ./.;
-
-          cargoLock = {
-            lockFile = ./Cargo.lock;
+  outputs =
+    { self, nixpkgs, flake-utils }:
+    let
+      systems = flake-utils.lib.eachDefaultSystem (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          halofetch = pkgs.callPackage ./nix/package.nix { };
+        in
+        {
+          packages = {
+            default = halofetch;
+            halofetch = halofetch;
           };
 
-          meta = with pkgs.lib; {
-            description = "A configurable fetch tool with centered ASCII art and powerline panels";
-            longDescription = ''
-              halofetch is a spiritual sibling of atlasWM — a Wayland compositor built
-              around an infinite canvas. It displays system information with a centered
-              ASCII logo and powerline panels, with a live TUI editor, custom palettes,
-              three scenes, and more than 500 embedded logo variants. Compiled as a
-              single Rust binary with no language runtime dependency.
-            '';
-            homepage = "https://github.com/mafuzyk/halofetch";
-            license = licenses.gpl3Plus;
-            platforms = platforms.linux;
-            maintainers = [ ];
-            mainProgram = "halofetch";
+          apps.default = {
+            type = "app";
+            program = "${halofetch}/bin/halofetch";
+            meta.description = "Run halofetch";
           };
-        };
 
-        apps.default = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/halofetch";
-        };
-      });
+          devShells.default = pkgs.mkShell {
+            packages = with pkgs; [
+              cargo
+              clippy
+              rustc
+              rustfmt
+            ];
+          };
+        }
+      );
+    in
+    systems
+    // {
+      nixosModules = {
+        default = ./nix/nixos.nix;
+        halofetch = ./nix/nixos.nix;
+      };
+
+      homeManagerModules = {
+        default = ./nix/home-manager.nix;
+        halofetch = ./nix/home-manager.nix;
+      };
+
+      overlays.default = final: prev: {
+        halofetch = final.callPackage ./nix/package.nix { };
+      };
+    };
 }
