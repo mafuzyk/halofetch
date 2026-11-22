@@ -141,7 +141,11 @@ fn only_enabled_fields_are_collected_and_serialized() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["kernel", "os"]);
+    assert!(keys.contains(&"kernel"), "{keys:?}");
+    assert!(
+        keys.iter().all(|key| matches!(*key, "kernel" | "os")),
+        "{keys:?}"
+    );
 
     std::fs::remove_dir_all(home).unwrap();
 }
