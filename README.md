@@ -19,7 +19,7 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/Rust-2021-E86B37?style=flat-square&logo=rust&logoColor=white&labelColor=1a1025" alt="Rust" /></a>
 </p>
 
-<img src="assets/fetch.png" width="880" alt="halofetch classic scene with a colored Linux logo and powerline panels" />
+<img src="assets/classic-wide.png" width="880" alt="halofetch classic layout at full width" />
 
 <sub><i>The classic layout, with a colored logo and two panels.</i></sub>
 
@@ -70,13 +70,13 @@ The same harness gives **58.0 ms median** and **64 ms p95** for `--format json`.
 
 <h2 align="center" id="screenshots">Screenshots</h2>
 
-| Classic | Side |
+| Multiple terminals | Live monitor |
 | --- | --- |
-| ![classic scene](assets/fetch.png) | ![side scene](assets/narrow.png) |
+| ![classic layout in four terminals](assets/classic-panes.png) | ![live monitor with an embedded shell](assets/monitor.png) |
 
-| Panels | Summary |
+| Dashboard and monitor | Classic at full width |
 | --- | --- |
-| ![dashboard panels](assets/panels.png) | ![summary scene](assets/summary.png) |
+| ![dashboard layout with gauges](assets/dashboard.png) | ![classic layout at full width](assets/classic-wide.png) |
 
 <h2 align="center" id="installation">Installation</h2>
 
