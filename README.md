@@ -74,9 +74,9 @@ The same harness gives **58.0 ms median** and **64 ms p95** for `--format json`.
 | --- | --- |
 | ![classic layout in four terminals](assets/classic-panes.png) | ![live monitor with an embedded shell](assets/monitor.png) |
 
-| Dashboard and monitor | Classic at full width |
+| Dashboard and monitor | Classic with prompt |
 | --- | --- |
-| ![dashboard layout with gauges](assets/dashboard.png) | ![classic layout at full width](assets/classic-wide.png) |
+| ![dashboard layout with gauges](assets/dashboard.png) | ![classic layout with the shell prompt and status line](assets/fetch.png) |
 
 <h2 align="center" id="installation">Installation</h2>
 
