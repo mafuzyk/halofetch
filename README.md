@@ -2,12 +2,13 @@
 
 <h1>halofetch</h1>
 
-<p><strong>A composed system fetch for the terminal.</strong></p>
+<p><strong>A system fetch for the terminal, with configurable panels and a live monitor.</strong></p>
 
 <p>
-  Three responsive scenes, 466 embedded ASCII logos, 32 fields, an image logo path,
-  a live monitor, and a real shell workspace.<br>
-  Written in Rust, shipped as a single binary.
+  halofetch prints your system information next to an ASCII logo or a PNG image.
+  It has three layouts, an editor for the configuration, and a monitor that keeps
+  the fetch above a real shell.<br>
+  It is a single Rust binary and runs on Linux and Windows.
 </p>
 
 <p>
@@ -20,13 +21,13 @@
 
 <img src="assets/fetch.png" width="880" alt="halofetch classic scene with a colored Linux logo and powerline panels" />
 
-<sub><i>The classic scene: a colored logo, two information panels, and color blocks on one canvas.</i></sub>
+<sub><i>The classic layout, with a colored logo and two panels.</i></sub>
 
 <p>
   <a href="#installation">Installation</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="#modes">Modes</a> ·
-  <a href="#make-it-yours">Customize</a> ·
+  <a href="#configuration">Configuration</a> ·
   <a href="#fastfetch-migration">Migration</a> ·
   <a href="#documentation">Docs</a>
 </p>
@@ -35,14 +36,15 @@
 
 ---
 
-## Why halofetch?
+## What it does
 
-- **Compose, do not dump.** `classic`, `side` and `dashboard` place a colored logo, two information panels and gauges on one deliberate canvas. The editor preview uses the same renderer as the output.
-- **Only collect what you show.** The static fetch, the live monitor and JSON inspect the enabled fields. A hidden field does not pay its detection cost.
-- **Real values, honest gaps.** CPU, GPU, memory, disk, sensors, battery, packages, desktop and network data come from `/proc`, `/sys`, `/etc` and local tools. A value that cannot be read is hidden.
-- **Two modes, one shell.** Print one fetch and leave, or keep the scene above a PTY-backed shell that behaves like a normal terminal.
-- **Safe configuration.** Version 3 schema, validation, normalization, migration from versions 1 and 2, numbered backups, private temporary files and atomic replacement. A symbolic link at the config path is refused.
-- **Scriptable output.** Versioned JSON, separate profiles with `--config`, a benchmark subcommand and deterministic plain output for pipes.
+- **Three layouts.** `classic` puts the logo between two panels, `side` puts it on the left, and `dashboard` draws boxes with gauges.
+- **Fetch or monitor.** `halofetch fetch` prints once and exits. `halofetch monitor` refreshes the scene above `$SHELL -i` in a pseudo-terminal.
+- **Reads only enabled fields.** Hidden and disabled fields are skipped by the fetch, the monitor and the JSON output.
+- **No made-up values.** Data comes from `/proc`, `/sys`, `/etc` and a few local commands. When a value cannot be read, the field is omitted.
+- **Editable without hand-editing JSON.** The terminal editor changes layouts, logos, colors, fields and startup behavior, with a live preview.
+- **Safe writes.** The configuration is validated, migrated when needed, and replaced atomically. A symlink at the config path is refused.
+- **Scriptable.** `--format json`, separate profiles with `--config`, and `halofetch benchmark` are built in.
 
 <h2 align="center" id="benchmarks">Benchmarks</h2>
 
@@ -54,15 +56,15 @@ Median wall-clock time on the reference machine (`Linux 7.2.15-zen1 x86_64`, Nix
 | ANSI, p95 | **60 ms** | 151 ms | 2.5× lower tail |
 | `sharky -c exec` (shell startup included) | **59 ms** | 145 ms | 41% of fastfetch |
 
-The same harness gives **58.0 ms median** and **64 ms p95** for `--format json`; JSON was not measured against fastfetch.
+The same harness gives **58.0 ms median** and **64 ms p95** for `--format json`. JSON was not compared against fastfetch.
 
 <details>
 <summary>How the benchmark is measured, and why the package count differs</summary>
 
-- Setup: the same 13 fields in both tools, no image and no logo image path, no halofetch cache, 5 warmups and 30 measured runs per command. The raw harness is a shell script kept outside the repository. JSON exists to show that serialization does not cost more than rendering.
-- halofetch reports **265 real Nix packages** across the system and user profiles. It reads manifests and direct profile references, collapses split outputs and deduplicates store paths. It does not call a closure a package list.
-- fastfetch reports the system and user profile closures (`nix-system` and `nix-user`), which is a different, larger quantity and a different workload. Correctness wins over the comparison: halofetch still runs in 39.5% of fastfetch's time while counting packages correctly.
-- The one-shot fetch is field-oriented. A benchmark with more enabled fields does more work, as it should.
+- Setup: the same 13 fields in both tools, no image, no halofetch cache, 5 warmups and 30 measured runs per command. The harness is a shell script kept outside the repository.
+- The package counts are not directly comparable. halofetch reports **265 Nix packages** across the system and user profiles by reading manifests and direct profile references, then deduplicating store paths.
+- fastfetch reports the `nix-system` and `nix-user` profile closures. That includes dependencies and produces a much larger number. We ran both anyway, and halofetch still took 39.5% of fastfetch's time.
+- The fetch only collects enabled fields. A configuration with more fields does more work.
 
 </details>
 
@@ -130,7 +132,7 @@ nix build .#halofetch
 nix run .#halofetch -- fetch
 ```
 
-The package installs `LICENSE`, `THIRD_PARTY_NOTICES.md`, `README.md`, `DOCS.md` and `logos/README.md` under `share` for packaging and license compliance.
+The package puts `LICENSE`, `THIRD_PARTY_NOTICES.md`, `README.md`, `DOCS.md` and `logos/README.md` under `share`, so the installed copy carries the same notices as the release archives.
 
 </details>
 
@@ -163,7 +165,7 @@ Rust and Cargo are needed only to build. The release profile is tuned in `Cargo.
 
 ### Start with your shell
 
-Let halofetch write the guarded startup hook instead of copying shell snippets:
+Install the startup hook with:
 
 ```bash
 halofetch init fish     # fish
@@ -172,7 +174,7 @@ halofetch init zsh      # zsh
 halofetch init sharky   # sharky
 ```
 
-The hook runs only in interactive shells, checks that `halofetch` exists, and never starts the monitor inside its own embedded shell. Remove it with:
+The hook only runs in interactive shells, checks that `halofetch` is installed, and runs `halofetch fetch`. It never starts the monitor inside its own embedded shell. Remove it with:
 
 ```bash
 halofetch init fish --remove
@@ -188,7 +190,7 @@ halofetch fetch --scene side
 halofetch fetch --watch
 ```
 
-`fetch` renders once and exits. `--watch` redraws the scene in place until `q`, `Esc` or `Ctrl+C`; `-i` sets the interval from 100 to 60000 ms.
+`fetch` renders once and exits. `--watch` redraws the scene in place until `q`, `Esc` or `Ctrl+C`, and `-i` sets the interval from 100 to 60000 ms.
 
 | Scene | Also accepted as | Shape |
 | --- | --- | --- |
@@ -196,7 +198,7 @@ halofetch fetch --watch
 | `side` | `classicfetch`, `fastfetch` | Logo on the left, information on the right |
 | `dashboard` | `cockpit` | Framed logo and System box, then Resources with gauges |
 
-The scenes reflow instead of clipping. `classic` stacks the logo, title and rows when a panel would need fewer than 10 value columns. `side` puts the logo above the information when the logo and 30 information columns do not fit. `dashboard` stacks its boxes and uses two inner columns when the terminal is wide enough.
+When space runs out, the scenes stack instead of cutting values. `classic` stacks the logo, title and rows when a panel would need fewer than 10 value columns. `side` puts the logo above the information when the logo and 30 information columns do not fit. `dashboard` stacks its boxes and uses two inner columns when the terminal is wide enough.
 
 ### Monitor
 
@@ -205,15 +207,15 @@ halofetch monitor
 halofetch monitor -i 500
 ```
 
-The upper region shows the scene with live values. The lower region is `$SHELL -i` in a pseudo-terminal, drawn through a VT100 parser, with completion, history, SSH, editors and control keys working normally. `Ctrl+Q` closes the workspace. Values refresh in place: uptime, load, processes, memory, swap, disk, battery, temperature, backlight, CPU usage and GPU usage. Packages, fonts and desktop detection run once.
+The upper region shows the scene with live values. The lower region is `$SHELL -i` in a pseudo-terminal, drawn through a VT100 parser, so completion, history, SSH, editors and control keys work normally. `Ctrl+Q` closes the workspace. Uptime, load, processes, memory, swap, disk, battery, temperature, backlight, CPU usage and GPU usage refresh in place. Packages, fonts and desktop detection run once.
 
-In an interactive terminal without a configuration file, plain `halofetch` opens the editor. Saving creates `~/.config/halofetch/config.json`. `halofetch fetch` always prints one static fetch, and `halofetch monitor` always opens the workspace.
+In an interactive terminal without a configuration file, plain `halofetch` opens the editor. Saving creates `~/.config/halofetch/config.json`. `halofetch fetch` always prints one fetch, and `halofetch monitor` always opens the workspace.
 
-<h2 align="center" id="make-it-yours">Make it yours</h2>
+<h2 align="center" id="configuration">Configuration</h2>
 
 ### Fields and panels
 
-HaloFetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Resources, Network and Power. Each panel entry can be shown or hidden, renamed, given another icon, drawn as a bar when the field has a gauge, and moved within or between panels. Labels are limited to 24 characters and icons to 4.
+halofetch has 32 fields in seven groups: System, Software, Desktop, Hardware, Resources, Network and Power. Each panel entry can be shown or hidden, renamed, given another icon, drawn as a bar when the field has a gauge, and moved within or between panels. Labels are limited to 24 characters and icons to 4.
 
 CPU usage and GPU usage are live values and appear only in monitor mode. Narrow CPU values drop the clock before the core count. Narrow GPU values drop `Corporation`, `Inc.` and `Series` before truncation.
 
@@ -259,9 +261,9 @@ halofetch config import-fastfetch ~/.config/fastfetch/config.jsonc --dry-run
 
 The importer reads JSONC with comments and trailing commas, maps the logo, padding, colors, title and modules, splits modules into the two panels, and reports what it skipped instead of dropping it silently. Inline `logo.type: "data"` art is saved as `logos/fastfetch-logo.txt`; an existing file and configuration are backed up with numbered `.bak` names. `logo.type: "small"` sets `logo.compact`. Only Kitty images are imported because halofetch renders Kitty graphics; sixel, iTerm, chafa and raw logos produce a warning.
 
-### Configuration without fear
+### Config files
 
-The default path is `~/.config/halofetch/config.json`. `halofetch config path` prints the active path. The file is validated before saving and written through an exclusive temporary file with `fsync` and an atomic rename. Existing permissions are preserved, a new file is private (`0600`), and a symbolic link at the destination is refused. Values outside their range are clamped on load, and an unusable file is moved aside as `.invalid` instead of deleted.
+The default path is `~/.config/halofetch/config.json`, and `halofetch config path` prints the active path. The file is checked before saving and written through an exclusive temporary file with `fsync` and an atomic rename. Existing permissions are preserved, a new file is private (`0600`), and a symlink at the destination is refused. Out-of-range values are clamped on load, and an unusable file is moved aside as `.invalid` instead of deleted.
 
 Use another profile without touching the daily setup:
 
@@ -354,7 +356,7 @@ The editor needs at least 60 × 18. From 110 columns the menu, settings and prev
 
 </details>
 
-<h2 align="center" id="command-map">Command map</h2>
+<h2 align="center" id="commands">Commands</h2>
 
 | Command | What it does |
 | --- | --- |
@@ -377,7 +379,7 @@ The editor needs at least 60 × 18. From 110 columns the menu, settings and prev
 | `halofetch benchmark` | Measure collection and rendering (`-n` runs) |
 | `halofetch update [--release]` | Update from a checkout or the latest release |
 
-`--scene`, `--format`, `--image` and `-c/--config PATH` are global and work before or after the command. `--help` is the authoritative reference.
+`--scene`, `--format`, `--image` and `-c/--config PATH` work before or after the command. Run `halofetch --help` for every flag.
 
 Colors go to a terminal only. A pipe or file gets plain text, as do `TERM=dumb` and a non-empty `NO_COLOR`. A non-empty `FORCE_COLOR` keeps colors in a pipe:
 
@@ -385,13 +387,13 @@ Colors go to a terminal only. A pipe or file gets plain text, as do `TERM=dumb` 
 FORCE_COLOR=1 halofetch | less -R
 ```
 
-<h2 align="center" id="machine-readable-output">Machine-readable output</h2>
+<h2 align="center" id="json-output">JSON output</h2>
 
 ```bash
 halofetch --format json | jq '.system.cpu'
 ```
 
-The document has `schema_version` 2, `system` and `gauges`. `system` contains the enabled fields in declaration order, plus `user` and `host` when the title is enabled; disabled or unreadable fields are absent. `gauges` holds numeric values: `memory`, `swap`, `disk` and `vram` as `used`/`total` bytes with `percent`, plus `cpu_percent`, `gpu_percent`, `cpu_temp_celsius`, `battery_percent` and `brightness_percent`. Scripts must check that a key exists.
+The document has `schema_version` 2, `system` and `gauges`. `system` contains the enabled fields in declaration order, plus `user` and `host` when the title is enabled. Disabled or unreadable fields are absent. `gauges` holds numbers: `memory`, `swap`, `disk` and `vram` as `used`/`total` bytes with `percent`, plus `cpu_percent`, `gpu_percent`, `cpu_temp_celsius`, `battery_percent` and `brightness_percent`. Check that a key exists before reading it.
 
 <h2 align="center" id="windows">Windows</h2>
 
@@ -415,14 +417,10 @@ cargo test --all
 cargo build --release --locked
 ```
 
-The static fetch, editor preview and monitor share `src/render`. Detection lives in `src/info`, configuration and validation in `src/config`, image encoding in `src/image`, fastfetch migration in `src/fastfetch`, and startup hooks in `src/init`. CI runs formatting, clippy, tests and release builds on Linux and Windows.
+The static fetch, editor preview and monitor share `src/render`. Detection lives in `src/info`, configuration and validation in `src/config`, image encoding in `src/image`, fastfetch migration in `src/fastfetch`, and startup hooks in `src/init`. CI runs formatting, clippy, tests and release builds on Linux and Windows, plus the Nix flake.
 
 <h2 align="center" id="license">License</h2>
 
-HaloFetch is licensed under [GPL-3.0-or-later](LICENSE). The embedded ASCII logos are derived from fastfetch's MIT-licensed collection; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the required notice.
+halofetch is licensed under [GPL-3.0-or-later](LICENSE). The embedded ASCII logos are derived from fastfetch's MIT-licensed collection; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the required notice.
 
-<div align="center">
-
-<sub>Compose the machine. Do not dump it.</sub>
-
-</div>
+Issues and patches are welcome. Include your terminal, shell and scene when reporting a layout bug.
