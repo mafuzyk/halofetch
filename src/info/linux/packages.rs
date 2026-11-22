@@ -3,10 +3,16 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::Duration;
 
-use super::home_dir;
+use super::command;
+use super::{home_dir, nix};
+use crate::field::{Field, Needed};
 use crate::info::join_counts;
+
+/// A package manager that takes longer than this is treated as unavailable.
+const COMMAND_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Default)]
 pub(super) struct Summary {
@@ -16,21 +22,24 @@ pub(super) struct Summary {
     pub(super) snap: Option<usize>,
 }
 
-pub(super) fn collect() -> Summary {
+pub(super) fn collect(needed: Needed) -> Summary {
     Summary {
-        summary: native_summary(),
-        flatpak: flatpak_count(),
-        snap: snap_count(),
+        summary: needed
+            .contains(Field::Packages)
+            .then(native_summary)
+            .flatten(),
+        flatpak: needed
+            .contains(Field::Flatpak)
+            .then(flatpak_count)
+            .flatten(),
+        snap: needed.contains(Field::Snap).then(snap_count).flatten(),
     }
 }
 
 fn native_summary() -> Option<String> {
-    let home = home_dir();
-    let nix_profile = home
-        .as_ref()
-        .map(|home| home.join(".nix-profile").to_string_lossy().into_owned());
+    let nix = std::thread::spawn(nix::count);
 
-    let managers: Vec<(&str, Option<usize>)> = vec![
+    let mut managers: Vec<(&str, Option<usize>)> = vec![
         ("pacman", count_dirs("/var/lib/pacman/local")),
         (
             "dpkg",
@@ -57,20 +66,10 @@ fn native_summary() -> Option<String> {
                 .flatten(),
         ),
         ("portage", count_portage("/var/db/pkg")),
-        (
-            "nix-system",
-            exists("/run/current-system/sw")
-                .then(|| command_lines("nix-store", &["-qR", "/run/current-system/sw"]))
-                .flatten(),
-        ),
-        (
-            "nix-user",
-            nix_profile
-                .as_deref()
-                .filter(|path| exists(path))
-                .and_then(|path| command_lines("nix-store", &["-qR", path])),
-        ),
     ];
+    if let Some(count) = nix.join().unwrap_or(None) {
+        managers.push(("nix", Some(count)));
+    }
 
     join_counts(
         &managers
@@ -94,12 +93,9 @@ fn count_apk(text: &str) -> usize {
 
 /// Non-empty lines of a command's standard output, when the command succeeds.
 fn command_lines(program: &str, args: &[&str]) -> Option<usize> {
-    let output = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    let output = command::output_with_timeout(cmd, COMMAND_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }

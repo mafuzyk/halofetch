@@ -11,7 +11,7 @@ mod process;
 mod registry;
 mod system;
 
-use crate::field::Field;
+use crate::field::{Field, Needed};
 
 use super::{
     format_bytes, format_bytes_pair, format_percent, format_uptime, put, Battery, CpuSampler,
@@ -23,7 +23,7 @@ pub(super) use hardware::cpu_totals;
 /// Windows 8 and later always run this compositor; there is nothing to detect.
 const DESKTOP_WINDOW_MANAGER: &str = "DWM";
 
-pub(super) fn collect(info: &mut SysInfo) {
+pub(super) fn collect(info: &mut SysInfo, _needed: Needed) {
     std::thread::scope(|scope| {
         let procs = scope.spawn(process::ProcTable::scan);
         let packages = scope.spawn(packages::collect);
@@ -87,7 +87,7 @@ pub(super) fn collect(info: &mut SysInfo) {
 }
 
 /// Re-reads the values that change between frames. Spawns no processes.
-pub(super) fn refresh(info: &mut SysInfo, sampler: &mut CpuSampler) {
+pub(super) fn refresh(info: &mut SysInfo, sampler: &mut CpuSampler, _needed: Needed) {
     put(
         info,
         Field::Uptime,

@@ -50,7 +50,9 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           archive="halofetch-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
-          tar -czf "$archive" -C "target/${{ matrix.target }}/release" halofetch
+          tar -czf "$archive" \
+            -C "target/${{ matrix.target }}/release" halofetch \
+            -C "$GITHUB_WORKSPACE" LICENSE README.md THIRD_PARTY_NOTICES.md
           sha256sum "$archive" > "$archive.sha256"
 
       - name: Package binary (Windows)
@@ -61,7 +63,8 @@ jobs:
           $files = @(
             "target/${{ matrix.target }}/release/halofetch.exe",
             "LICENSE",
-            "README.md"
+            "README.md",
+            "THIRD_PARTY_NOTICES.md"
           )
           Compress-Archive -Path $files -DestinationPath $archive
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()

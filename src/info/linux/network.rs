@@ -3,10 +3,33 @@
 use std::ffi::CStr;
 use std::fs;
 use std::net::Ipv4Addr;
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::Duration;
+
+use super::command;
 
 /// Interface name prefixes of virtual networks, least preferred for the primary address.
-const VIRTUAL_PREFIXES: [&str; 6] = ["docker", "veth", "br-", "virbr", "tun", "tailscale"];
+const VIRTUAL_PREFIXES: [&str; 19] = [
+    "docker",
+    "veth",
+    "br",
+    "virbr",
+    "tun",
+    "tap",
+    "tailscale",
+    "wg",
+    "zt",
+    "podman",
+    "cni",
+    "flannel",
+    "kube",
+    "lxc",
+    "incus",
+    "vmnet",
+    "vboxnet",
+    "vxlan",
+    "geneve",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Wifi {
@@ -138,12 +161,9 @@ fn parse_wireless(text: &str) -> Option<(String, Option<i32>)> {
 
 /// Network name from `iwgetid -r`. Only called once a wireless interface exists.
 fn current_ssid() -> Option<String> {
-    let output = Command::new("iwgetid")
-        .arg("-r")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("iwgetid");
+    cmd.arg("-r");
+    let output = command::output_with_timeout(cmd, Duration::from_millis(500))?;
     if !output.status.success() {
         return None;
     }
@@ -219,6 +239,41 @@ wlan0: 0000   70.  -52.  -256        0      0      0      0      0        0
         assert_eq!(
             choose_interface(&candidates).map(|(name, _)| name),
             Some("enp1s0".to_string())
+        );
+    }
+
+    #[test]
+    fn vpn_and_bridge_names_are_virtual() {
+        for name in [
+            "wg0",
+            "zt0",
+            "tailscale0",
+            "tun0",
+            "br0",
+            "br-1a2b",
+            "docker0",
+            "podman0",
+            "vmnet8",
+            "vboxnet0",
+            "vxlan0",
+        ] {
+            assert_eq!(tier(name), 2, "{name}");
+        }
+        for name in ["eth0", "enp1s0", "wlan0", "wlp2s0"] {
+            assert_eq!(tier(name), 0, "{name}");
+        }
+        assert_eq!(tier("usb0"), 1);
+    }
+
+    #[test]
+    fn a_vpn_does_not_shadow_a_physical_address() {
+        let candidates = vec![
+            ("wg0".to_string(), Ipv4Addr::new(10, 8, 0, 2)),
+            ("eth0".to_string(), Ipv4Addr::new(192, 168, 1, 5)),
+        ];
+        assert_eq!(
+            choose_interface(&candidates),
+            Some(("eth0".to_string(), Ipv4Addr::new(192, 168, 1, 5)))
         );
     }
 }

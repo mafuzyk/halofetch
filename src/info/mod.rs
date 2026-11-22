@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::field::Field;
+use crate::field::{Field, Needed};
 
 const KIB: u64 = 1024;
 const MIB: u64 = KIB * KIB;
@@ -97,14 +97,13 @@ impl SysInfo {
         self.values.get(&field).map(String::as_str)
     }
 
-    /// Stores the trimmed value. An empty value removes the field.
+    /// Stores the sanitized value. An empty value removes the field.
     pub fn set(&mut self, field: Field, value: impl Into<String>) {
-        let value = value.into();
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
+        let value = sanitize_text(&value.into());
+        if value.is_empty() {
             self.values.remove(&field);
         } else {
-            self.values.insert(field, trimmed.to_string());
+            self.values.insert(field, value);
         }
     }
 
@@ -215,6 +214,48 @@ impl SysInfo {
     }
 }
 
+/// Removes terminal escape sequences and control characters from detected text.
+/// Internal spaces are preserved; edges are trimmed. A value such as `$USER`
+/// cannot move the cursor or change colors in the rendered output.
+pub(crate) fn sanitize_text(text: &str) -> String {
+    // Most values are plain text. Avoid the parser and its allocation path for them.
+    if !text.chars().any(char::is_control) {
+        return text.trim().to_string();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(if c.is_control() { ' ' } else { c });
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                // CSI ends at the first byte in 0x40..=0x7e.
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']' | 'P' | '^' | '_') => {
+                // OSC, DCS, PM and APC end at BEL or at ESC \.
+                while let Some(next) = chars.next() {
+                    if next == '\x07' {
+                        break;
+                    }
+                    if next == '\x1b' && chars.next_if_eq(&'\\').is_some() {
+                        break;
+                    }
+                }
+            }
+            Some(_) | None => {}
+        }
+    }
+    out.trim().to_string()
+}
+
 /// Battery charge and state, as shown in the Battery field.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Battery {
@@ -268,8 +309,14 @@ impl CpuSampler {
 /// Detects everything once. Never fails, never panics and never sleeps. The live
 /// values (CPU and GPU usage) are left to [`refresh_live`].
 pub fn collect() -> SysInfo {
+    collect_for(Needed::all())
+}
+
+/// Detects only the fields in `needed`. A missing value is not an error: the
+/// renderer simply leaves that entry out.
+pub fn collect_for(needed: Needed) -> SysInfo {
     let mut info = SysInfo::default();
-    platform::collect(&mut info);
+    platform::collect(&mut info, needed);
     info
 }
 
@@ -277,8 +324,8 @@ pub fn collect() -> SysInfo {
 /// and process count, plus load, CPU temperature, backlight, CPU and GPU usage where the
 /// platform reports them. Spawns no processes. CPU usage needs two calls on the same
 /// sampler, so the first call leaves it unset.
-pub fn refresh_live(info: &mut SysInfo, sampler: &mut CpuSampler) {
-    platform::refresh(info, sampler);
+pub fn refresh_live(info: &mut SysInfo, sampler: &mut CpuSampler, needed: Needed) {
+    platform::refresh(info, sampler, needed);
 }
 
 /// `"6.21 / 30.6 GiB (20%)"`. The unit is picked from the total and printed once.
@@ -469,6 +516,22 @@ mod tests {
         info.set(Field::User, "atlas");
         info.remove(Field::User);
         assert_eq!(info.get(Field::User), None);
+    }
+
+    #[test]
+    fn sanitize_removes_escape_sequences_and_controls() {
+        assert_eq!(sanitize_text("\x1b[31mred\x1b[0m\nnext"), "red next");
+        assert_eq!(sanitize_text("a\x1b]0;title\x07b"), "ab");
+        assert_eq!(sanitize_text("\x1b[2Jtext\x1b"), "text");
+        assert_eq!(sanitize_text("  a  b  "), "a  b");
+        assert_eq!(sanitize_text("plain text"), "plain text");
+    }
+
+    #[test]
+    fn set_removes_escape_sequences() {
+        let mut info = SysInfo::default();
+        info.set(Field::User, "\x1b[31mroot\x1b[0m\n");
+        assert_eq!(info.get(Field::User), Some("root"));
     }
 
     #[test]
@@ -690,7 +753,7 @@ mod tests {
     fn collect_and_refresh_do_not_panic() {
         let mut info = collect();
         let mut sampler = CpuSampler::default();
-        refresh_live(&mut info, &mut sampler);
-        refresh_live(&mut info, &mut sampler);
+        refresh_live(&mut info, &mut sampler, Needed::all());
+        refresh_live(&mut info, &mut sampler, Needed::all());
     }
 }

@@ -28,6 +28,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::config::{Config, Scene};
+use crate::field::Needed;
 use crate::info::{self, CpuSampler, SysInfo};
 use crate::logo::LogoSet;
 use crate::render::scene::RenderCtx;
@@ -50,7 +51,8 @@ const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 type Term = Terminal<CrosstermBackend<io::Stdout>>;
 
 pub fn run(cfg: &Config, interval_ms: u64, scene: Scene) -> Result<()> {
-    let system = info::collect();
+    let needed = cfg.needed_fields();
+    let system = info::collect_for(needed);
     let logos = cfg.logo_set(&system);
     let mut workspace = Workspace {
         cfg,
@@ -59,6 +61,7 @@ pub fn run(cfg: &Config, interval_ms: u64, scene: Scene) -> Result<()> {
         system,
         logos,
         sampler: CpuSampler::new(),
+        needed,
     };
 
     let (columns, rows) = terminal::size()?;
@@ -122,11 +125,12 @@ struct Workspace<'a> {
     system: SysInfo,
     logos: LogoSet,
     sampler: CpuSampler,
+    needed: Needed,
 }
 
 impl Workspace<'_> {
     fn refresh(&mut self) {
-        info::refresh_live(&mut self.system, &mut self.sampler);
+        info::refresh_live(&mut self.system, &mut self.sampler, self.needed);
     }
 
     /// Scene lines for the information region of a screen `area`.
@@ -428,7 +432,8 @@ fn is_quit(key: KeyEvent) -> bool {
 /// Redraws the static scene in place every `interval` until q, Esc or Ctrl+C. No shell is
 /// started, and the system is detected once and refreshed between frames.
 pub fn watch(cfg: &Config, scene: Scene, interval: Duration) -> Result<()> {
-    let mut system = info::collect();
+    let needed = cfg.needed_fields();
+    let mut system = info::collect_for(needed);
     let logos = cfg.logo_set(&system);
     let mut sampler = CpuSampler::new();
     let _session = WatchTerminal::enter()?;
@@ -449,7 +454,7 @@ pub fn watch(cfg: &Config, scene: Scene, interval: Duration) -> Result<()> {
         if wait_for_quit(interval)? {
             return Ok(());
         }
-        info::refresh_live(&mut system, &mut sampler);
+        info::refresh_live(&mut system, &mut sampler, needed);
     }
 }
 
@@ -638,13 +643,13 @@ fn cursor_report(row: u16, col: u16) -> String {
 }
 
 /// Bytes sent to the shell for a pasted text. The text is wrapped in bracketed paste
-/// markers only when the shell enabled them, and an end marker inside the text is
-/// removed so it cannot end the paste early.
+/// markers only when the shell enabled them, and markers inside the text are removed
+/// so they cannot end or nest the paste early.
 fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
     if !bracketed {
         return text.as_bytes().to_vec();
     }
-    let body = text.replace(PASTE_END, "");
+    let body = text.replace(PASTE_START, "").replace(PASTE_END, "");
     let mut bytes = Vec::with_capacity(body.len() + PASTE_START.len() + PASTE_END.len());
     bytes.extend_from_slice(PASTE_START.as_bytes());
     bytes.extend_from_slice(body.as_bytes());
@@ -780,6 +785,7 @@ mod tests {
     #[test]
     fn paste_cannot_end_itself_early() {
         assert_eq!(paste_bytes("a\x1b[201~b", true), b"\x1b[200~ab\x1b[201~");
+        assert_eq!(paste_bytes("a\x1b[200~b", true), b"\x1b[200~ab\x1b[201~");
     }
 
     #[test]

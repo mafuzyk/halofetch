@@ -1,8 +1,12 @@
+mod atomic;
 mod benchmark;
 mod cli;
 mod config;
+mod fastfetch;
 mod field;
+mod image;
 mod info;
+mod init;
 mod live;
 mod logo;
 mod output;
@@ -25,6 +29,7 @@ use color_eyre::Result;
 
 use cli::{Args, Command, ConfigAction, LogosAction, OutputFormat, PresetAction};
 use config::{Config, Scene, StartupMode};
+use logo::LogoSource;
 use render::scene::RenderCtx;
 use render::{Line, Span, Style};
 use theme::Color;
@@ -77,6 +82,7 @@ fn creates_config(args: &Args) -> bool {
         || matches!(
             args.command,
             Some(Command::Config { .. })
+                | Some(Command::Init { .. })
                 | Some(Command::Preset {
                     action: PresetAction::Apply { .. }
                 })
@@ -85,7 +91,11 @@ fn creates_config(args: &Args) -> bool {
 
 fn run_command(args: &Args, command: &Command) -> Result<()> {
     match command {
-        Command::Fetch { watch: false, .. } => print_fetch(args, &Config::load()?),
+        Command::Fetch { watch: false, .. } => {
+            let mut cfg = Config::load()?;
+            apply_image_override(&mut cfg, args);
+            print_fetch(args, &cfg)
+        }
         Command::Fetch {
             watch: true,
             interval,
@@ -93,12 +103,21 @@ fn run_command(args: &Args, command: &Command) -> Result<()> {
             if matches!(args.format, OutputFormat::Json) {
                 return Err(eyre!("--watch cannot be combined with --format json"));
             }
+            if args.image.is_some() {
+                return Err(eyre!("--image is only supported by the static fetch"));
+            }
             require_terminal("fetch --watch")?;
             let cfg = Config::load()?;
             let interval = interval.unwrap_or(cfg.startup.interval_ms);
             live::watch(&cfg, scene_for(args, &cfg), Duration::from_millis(interval))
         }
         Command::Monitor { interval } => {
+            if matches!(args.format, OutputFormat::Json) {
+                return Err(eyre!("monitor cannot be combined with --format json"));
+            }
+            if args.image.is_some() {
+                return Err(eyre!("--image is only supported by the static fetch"));
+            }
             require_terminal("monitor")?;
             let cfg = Config::load()?;
             let interval = interval.unwrap_or(cfg.startup.interval_ms);
@@ -108,6 +127,9 @@ fn run_command(args: &Args, command: &Command) -> Result<()> {
             None | Some(ConfigAction::Edit) => edit_config(false),
             Some(ConfigAction::Path) => print_config_path(),
             Some(ConfigAction::Reset) => reset_config(),
+            Some(ConfigAction::ImportFastfetch { file, dry_run }) => {
+                import_fastfetch(file.as_deref(), *dry_run)
+            }
         },
         Command::Preset { action } => match action {
             PresetAction::List => list_presets(),
@@ -122,7 +144,153 @@ fn run_command(args: &Args, command: &Command) -> Result<()> {
             benchmark::run(&cfg, scene_for(args, &cfg), *iterations)
         }
         Command::Update { release } => update::run(*release),
+        Command::Init { shell, remove } => run_init(*shell, *remove),
     }
+}
+
+fn run_init(shell: init::Shell, remove: bool) -> Result<()> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+        .ok_or_else(|| eyre!("cannot determine the home directory"))?;
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    let sharky = std::env::var_os("SHARKY_CONFIG").map(PathBuf::from);
+    let zdotdir = std::env::var_os("ZDOTDIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    let path = init::config_path(
+        shell,
+        &home,
+        xdg.as_deref(),
+        sharky.as_deref(),
+        zdotdir.as_deref(),
+    );
+    let outcome = if remove {
+        init::remove(shell, &path)?
+    } else {
+        init::install(shell, &path)?
+    };
+    let name = shell.label();
+    let message = match outcome {
+        init::Outcome::Created | init::Outcome::Updated => {
+            format!(
+                "Added the HaloFetch startup hook for {name} to {}.",
+                path.display()
+            )
+        }
+        init::Outcome::AlreadyPresent => {
+            format!(
+                "The HaloFetch startup hook for {name} is already in {}.",
+                path.display()
+            )
+        }
+        init::Outcome::Removed => {
+            format!(
+                "Removed the HaloFetch startup hook for {name} from {}.",
+                path.display()
+            )
+        }
+        init::Outcome::NotPresent => {
+            format!(
+                "No HaloFetch startup hook for {name} in {}.",
+                path.display()
+            )
+        }
+    };
+    emit(&format!("{message}\n"))
+}
+
+fn import_fastfetch(file: Option<&Path>, dry_run: bool) -> Result<()> {
+    let source = match file {
+        Some(path) => path.to_path_buf(),
+        None => fastfetch::default_path()
+            .or_else(fastfetch::preferred_path)
+            .ok_or_else(|| eyre!("no fastfetch configuration found; pass a file"))?,
+    };
+    if !source.is_file() {
+        bail!("fastfetch configuration not found: {}", source.display());
+    }
+
+    let import = fastfetch::parse(&fs::read_to_string(&source)?)?;
+    let mut config = import.config;
+    config.normalize();
+    config.validate()?;
+    let destination = config::config_path()?;
+
+    if let Some(data) = &import.logo_data {
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let logo_dir =
+            std::path::absolute(parent.join("logos")).unwrap_or_else(|_| parent.join("logos"));
+        let logo_path = logo_dir.join("fastfetch-logo.txt");
+        if dry_run {
+            if logo_path.exists() {
+                let backup = backup_path(&logo_path, |candidate| candidate.exists());
+                emit(&format!(
+                    "Would back up the old logo to {}.\n",
+                    backup.display()
+                ))?;
+            }
+            emit(&format!(
+                "Would write the inline logo to {}.\n",
+                logo_path.display()
+            ))?;
+        } else {
+            fs::create_dir_all(&logo_dir)?;
+            if logo_path.exists() {
+                let backup = backup_path(&logo_path, |candidate| candidate.exists());
+                fs::copy(&logo_path, &backup)?;
+                emit(&format!("Logo backup: {}\n", backup.display()))?;
+            }
+            crate::atomic::write(&logo_path, format!("{data}\n").as_bytes())?;
+            config.logo.source = LogoSource::File {
+                path: logo_path.to_string_lossy().into_owned(),
+            };
+            emit(&format!("Inline logo: {}\n", logo_path.display()))?;
+        }
+    }
+
+    if dry_run {
+        if destination.exists() {
+            let backup = backup_path(&destination, |candidate| candidate.exists());
+            emit(&format!(
+                "Would back up the old configuration to {}.\n",
+                backup.display()
+            ))?;
+        }
+        emit(&format!(
+            "Would import {} into {}.\n",
+            source.display(),
+            destination.display()
+        ))?;
+    } else {
+        if destination.exists() {
+            let backup = backup_path(&destination, |candidate| candidate.exists());
+            fs::copy(&destination, &backup)?;
+            emit(&format!("Backup: {}\n", backup.display()))?;
+        }
+        config.save()?;
+        emit(&format!(
+            "Imported {} into {}.\n",
+            source.display(),
+            destination.display()
+        ))?;
+    }
+
+    if !import.mapped.is_empty() {
+        emit(&format!("Mapped: {}\n", import.mapped.join(", ")))?;
+    }
+    if !import.skipped.is_empty() {
+        emit(&format!("Skipped: {}\n", import.skipped.join(", ")))?;
+    }
+    for warning in &import.warnings {
+        emit(&format!("Warning: {warning}\n"))?;
+    }
+    Ok(())
 }
 
 /// No subcommand: the legacy flags, then the startup mode. Without a configuration
@@ -147,19 +315,41 @@ fn run_default(args: &Args) -> Result<()> {
         return show_logo(None);
     }
     if matches!(args.format, OutputFormat::Json) {
-        return print_json();
+        if args.image.is_some() {
+            return Err(eyre!("--image cannot be combined with --format json"));
+        }
+        return print_json(&Config::load()?);
     }
 
     let interactive = is_interactive();
-    let cfg = if interactive && !Config::exists() {
+    let mut cfg = if interactive && !Config::exists() {
         first_run_setup()?
     } else {
         Config::load()?
     };
     if interactive && cfg.startup.mode == StartupMode::Monitor {
+        if args.image.is_some() {
+            return Err(eyre!("--image is only supported by the static fetch"));
+        }
         return live::run(&cfg, cfg.startup.interval_ms, scene_for(args, &cfg));
     }
+    apply_image_override(&mut cfg, args);
     print_static(&cfg, scene_for(args, &cfg))
+}
+
+/// `--image` replaces the configured path but keeps the configured protocol and
+/// size. An explicit flag must not silently switch a disabled image back on.
+fn apply_image_override(cfg: &mut Config, args: &Args) {
+    let Some(path) = &args.image else {
+        return;
+    };
+    cfg.logo.image.path = path.to_string_lossy().into_owned();
+    if !path.is_file() {
+        eprintln!(
+            "halofetch: image {} not found; using the character logo",
+            path.display()
+        );
+    }
 }
 
 fn scene_for(args: &Args, cfg: &Config) -> Scene {
@@ -194,15 +384,30 @@ fn first_run_setup() -> Result<Config> {
 
 fn print_fetch(args: &Args, cfg: &Config) -> Result<()> {
     match args.format {
-        OutputFormat::Json => print_json(),
+        OutputFormat::Json => {
+            if args.image.is_some() {
+                return Err(eyre!("--image cannot be combined with --format json"));
+            }
+            print_json(cfg)
+        }
         OutputFormat::Ansi => print_static(cfg, scene_for(args, cfg)),
     }
 }
 
 fn print_static(cfg: &Config, scene: Scene) -> Result<()> {
-    let lines = render_static(cfg, scene, static_width());
-    let text = if plain_output() {
+    let plain = plain_output();
+    let (lines, image, fallback) = render_fetch(cfg, scene, static_width(), !plain);
+    let text = if plain {
         render::to_plain(&lines)
+    } else if let Some(image) = image {
+        match image::render(lines, &image) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("halofetch: {error}; using the character logo");
+                let lines = fallback.unwrap_or_else(|| render_static(cfg, scene, static_width()));
+                render::to_ansi(&lines)
+            }
+        }
     } else {
         render::to_ansi(&lines)
     };
@@ -211,19 +416,46 @@ fn print_static(cfg: &Config, scene: Scene) -> Result<()> {
 
 /// The static fetch: detect the system, pick the logo that fits, lay out the scene.
 fn render_static(cfg: &Config, scene: Scene, width: usize) -> Vec<Line> {
-    let system = info::collect();
-    let logos = cfg.logo_set(&system);
+    render_fetch(cfg, scene, width, false).0
+}
+
+/// Lays out the scene, optionally with an image marker in place of the logo. The
+/// third value is the same scene rendered with the original character logo, so a
+/// failed image render can fall back without losing the logo.
+fn render_fetch(
+    cfg: &Config,
+    scene: Scene,
+    width: usize,
+    allow_image: bool,
+) -> (Vec<Line>, Option<image::ImageSource>, Option<Vec<Line>>) {
+    let system = info::collect_for(cfg.needed_fields());
+    let (logos, image) = if allow_image {
+        cfg.fetch_logo_set(&system)
+    } else {
+        (cfg.logo_set(&system), None)
+    };
     let ctx = RenderCtx {
         info: &system,
         cfg,
         logos: &logos,
         width,
     };
-    render::scene::render(scene, &ctx)
+    let lines = render::scene::render(scene, &ctx);
+    let fallback = image.as_ref().map(|_| {
+        let logos = cfg.logo_set(&system);
+        let ctx = RenderCtx {
+            info: &system,
+            cfg,
+            logos: &logos,
+            width,
+        };
+        render::scene::render(scene, &ctx)
+    });
+    (lines, image, fallback)
 }
 
-fn print_json() -> Result<()> {
-    let system = info::collect();
+fn print_json(cfg: &Config) -> Result<()> {
+    let system = info::collect_for(cfg.needed_fields());
     emit(&format!("{}\n", output::system_info_json(&system)?))
 }
 

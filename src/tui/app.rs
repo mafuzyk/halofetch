@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 
-use crate::config::{self, Config, FieldEntry, IconSet, InfoStyle, Scene, StartupMode};
+use crate::config::{
+    self, Config, FieldEntry, IconSet, ImageProtocol, InfoStyle, Scene, StartupMode,
+};
 use crate::field::{Field, FieldGroup};
 use crate::info::SysInfo;
 use crate::logo::{self, Logo, LogoSet, LogoSource};
@@ -28,6 +30,10 @@ const MAX_LABEL: usize = 24;
 const MAX_ICON: usize = 4;
 const MAX_TITLE_FORMAT: usize = 64;
 const MAX_SEPARATOR: usize = 4;
+const MIN_IMAGE_WIDTH: usize = 8;
+const MAX_IMAGE_WIDTH: usize = 200;
+const MIN_IMAGE_HEIGHT: usize = 4;
+const MAX_IMAGE_HEIGHT: usize = 80;
 const LOGO_FILTER_MAX: usize = 32;
 const ADD_FILTER_MAX: usize = 32;
 const THEME_FILTER_MAX: usize = 32;
@@ -128,7 +134,12 @@ pub enum Setting {
     Interval,
     LogoSource,
     LogoCompact,
+    LogoAlwaysCompact,
     LogoPath,
+    ImagePath,
+    ImageWidth,
+    ImageHeight,
+    ImageProtocol,
     /// Legacy Windows consoles do not turn pastes into `Event::Paste`, so the logo can be
     /// taken from the clipboard instead.
     #[cfg(windows)]
@@ -161,7 +172,12 @@ impl Setting {
             Self::Interval => "Refresh interval",
             Self::LogoSource => "Source",
             Self::LogoCompact => "Compact on narrow terminals",
+            Self::LogoAlwaysCompact => "Always use compact logo",
             Self::LogoPath => "File path",
+            Self::ImagePath => "Image file (fetch only)",
+            Self::ImageWidth => "Image width",
+            Self::ImageHeight => "Image height",
+            Self::ImageProtocol => "Image protocol (fetch only)",
             #[cfg(windows)]
             Self::PasteLogo => "Paste logo from clipboard",
         }
@@ -170,7 +186,11 @@ impl Setting {
     pub const fn is_bool(self) -> bool {
         matches!(
             self,
-            Self::HideEmpty | Self::ColorBlocks | Self::ShowTitle | Self::LogoCompact
+            Self::HideEmpty
+                | Self::ColorBlocks
+                | Self::ShowTitle
+                | Self::LogoCompact
+                | Self::LogoAlwaysCompact
         )
     }
 
@@ -185,6 +205,7 @@ impl Setting {
                 | Self::TitleFormat
                 | Self::TitleSeparator
                 | Self::LogoPath
+                | Self::ImagePath
         )
     }
 
@@ -196,7 +217,13 @@ impl Setting {
     pub const fn is_number(self) -> bool {
         matches!(
             self,
-            Self::Gap | Self::Padding | Self::Cascade | Self::MaxValueWidth | Self::Interval
+            Self::Gap
+                | Self::Padding
+                | Self::Cascade
+                | Self::MaxValueWidth
+                | Self::Interval
+                | Self::ImageWidth
+                | Self::ImageHeight
         )
     }
 
@@ -210,6 +237,7 @@ impl Setting {
                 | Self::Icons
                 | Self::Mode
                 | Self::LogoSource
+                | Self::ImageProtocol
         )
     }
 }
@@ -529,10 +557,20 @@ impl App {
                 LogoSource::None => "None".to_string(),
             },
             Setting::LogoCompact => on_off(cfg.logo.auto_small),
+            Setting::LogoAlwaysCompact => on_off(cfg.logo.compact),
             Setting::LogoPath => match &cfg.logo.source {
                 LogoSource::File { path } => path.clone(),
                 _ => String::new(),
             },
+            Setting::ImagePath => cfg.logo.image.path.clone(),
+            Setting::ImageWidth => cfg.logo.image.width.to_string(),
+            Setting::ImageHeight => cfg.logo.image.height.to_string(),
+            Setting::ImageProtocol => match cfg.logo.image.protocol {
+                ImageProtocol::Auto => "Auto",
+                ImageProtocol::Kitty => "Kitty",
+                ImageProtocol::None => "Off",
+            }
+            .to_string(),
             #[cfg(windows)]
             Setting::PasteLogo => "press Enter".to_string(),
         }
@@ -577,10 +615,20 @@ impl App {
             ],
             Section::Startup => vec![Setting::Mode, Setting::Interval],
             Section::Logo => {
-                let mut rows = vec![Setting::LogoSource, Setting::LogoCompact];
+                let mut rows = vec![
+                    Setting::LogoSource,
+                    Setting::LogoCompact,
+                    Setting::LogoAlwaysCompact,
+                ];
                 if matches!(self.cfg.logo.source, LogoSource::File { .. }) {
                     rows.push(Setting::LogoPath);
                 }
+                rows.extend([
+                    Setting::ImagePath,
+                    Setting::ImageWidth,
+                    Setting::ImageHeight,
+                    Setting::ImageProtocol,
+                ]);
                 #[cfg(windows)]
                 rows.push(Setting::PasteLogo);
                 rows
@@ -836,6 +884,7 @@ impl App {
                     path: trimmed.to_string(),
                 };
             }
+            Setting::ImagePath => self.cfg.logo.image.path = trimmed.to_string(),
             Setting::SavePalette => {
                 if self.cfg.custom_palettes.contains_key(trimmed)
                     && text.armed.as_deref() != Some(trimmed)
@@ -876,6 +925,7 @@ impl App {
             Setting::TitleFormat => (self.cfg.title.format.clone(), MAX_TITLE_FORMAT),
             Setting::TitleSeparator => (self.cfg.title.separator.clone(), MAX_SEPARATOR),
             Setting::LogoPath => (self.setting_value(Setting::LogoPath), 512),
+            Setting::ImagePath => (self.cfg.logo.image.path.clone(), 512),
             _ => return,
         };
         self.popup = Some(Popup::Text(TextPopup {
@@ -1073,6 +1123,7 @@ impl App {
             Setting::ColorBlocks => self.cfg.layout.color_blocks = !self.cfg.layout.color_blocks,
             Setting::ShowTitle => self.cfg.title.enabled = !self.cfg.title.enabled,
             Setting::LogoCompact => self.cfg.logo.auto_small = !self.cfg.logo.auto_small,
+            Setting::LogoAlwaysCompact => self.cfg.logo.compact = !self.cfg.logo.compact,
             _ => {}
         }
     }
@@ -1117,6 +1168,29 @@ impl App {
                 }
             }
             Setting::LogoSource => self.cycle_logo_source(delta),
+            Setting::ImageWidth => {
+                self.cfg.logo.image.width = step_clamped(
+                    self.cfg.logo.image.width,
+                    delta,
+                    MIN_IMAGE_WIDTH,
+                    MAX_IMAGE_WIDTH,
+                )
+            }
+            Setting::ImageHeight => {
+                self.cfg.logo.image.height = step_clamped(
+                    self.cfg.logo.image.height,
+                    delta,
+                    MIN_IMAGE_HEIGHT,
+                    MAX_IMAGE_HEIGHT,
+                )
+            }
+            Setting::ImageProtocol => {
+                self.cfg.logo.image.protocol = match self.cfg.logo.image.protocol {
+                    ImageProtocol::Auto => ImageProtocol::Kitty,
+                    ImageProtocol::Kitty => ImageProtocol::None,
+                    ImageProtocol::None => ImageProtocol::Auto,
+                }
+            }
             Setting::Gap => {
                 self.cfg.layout.gap = step_clamped(self.cfg.layout.gap, delta, 0, MAX_SPACING)
             }
@@ -1902,6 +1976,7 @@ fn text_error(target: Setting, value: &str) -> Option<String> {
             .is_empty()
             .then(|| "Enter a name for the palette".to_string()),
         Setting::LogoPath => logo_path_error(value.trim()),
+        Setting::ImagePath => image_path_error(value.trim()),
         _ => None,
     }
 }
@@ -1919,6 +1994,19 @@ fn logo_path_error(value: &str) -> Option<String> {
         Ok(_) => Some("The file contains no text".to_string()),
         Err(_) => Some("The file cannot be read as text".to_string()),
     }
+}
+
+fn image_path_error(value: &str) -> Option<String> {
+    if value.is_empty() {
+        return None;
+    }
+    let path = logo::expand_home(value);
+    if !path.is_file() {
+        return Some("File not found".to_string());
+    }
+    crate::image::validate_file(&path)
+        .err()
+        .map(|error| error.to_string())
 }
 
 fn parse_color(value: &str) -> Option<Color> {
@@ -2277,5 +2365,39 @@ mod tests {
             .map(Setting::label)
             .collect();
         assert_eq!(labels.contains(&"Paste logo from clipboard"), cfg!(windows));
+    }
+
+    #[test]
+    fn image_settings_edit_the_configuration() {
+        let mut app = new_app();
+        assert!(app
+            .section_rows(Section::Logo)
+            .contains(&Setting::ImagePath));
+
+        app.adjust(Setting::ImageWidth, 1);
+        app.adjust(Setting::ImageHeight, -1);
+        assert_eq!(app.cfg.logo.image.width, 33);
+        assert_eq!(app.cfg.logo.image.height, 15);
+
+        app.adjust(Setting::ImageProtocol, 1);
+        assert_eq!(app.cfg.logo.image.protocol, ImageProtocol::Kitty);
+        assert_eq!(app.setting_value(Setting::ImageProtocol), "Kitty");
+        app.adjust(Setting::ImageProtocol, 1);
+        assert_eq!(app.cfg.logo.image.protocol, ImageProtocol::None);
+        assert_eq!(app.setting_value(Setting::ImageProtocol), "Off");
+
+        assert_eq!(image_path_error(""), None);
+        assert_eq!(
+            image_path_error("/nonexistent/halofetch.png"),
+            Some("File not found".to_string())
+        );
+        let valid = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fetch.png");
+        assert_eq!(image_path_error(valid), None);
+
+        let broken =
+            std::env::temp_dir().join(format!("halofetch-tui-image-{}.png", std::process::id()));
+        std::fs::write(&broken, b"\x89PNG\r\n\x1a\npixels").unwrap();
+        assert!(image_path_error(broken.to_str().unwrap()).is_some());
+        let _ = std::fs::remove_file(&broken);
     }
 }

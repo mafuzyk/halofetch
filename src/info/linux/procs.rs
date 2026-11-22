@@ -57,9 +57,13 @@ impl ProcTable {
                 continue;
             };
             if let Some((comm, ppid)) = parse_stat(&stat) {
-                let title = fs::read(entry.path().join("cmdline"))
-                    .ok()
-                    .and_then(|cmdline| process_title(&cmdline));
+                let title = if INTERPRETERS.contains(&comm.as_str()) {
+                    fs::read(entry.path().join("cmdline"))
+                        .ok()
+                        .and_then(|cmdline| process_title(&cmdline))
+                } else {
+                    None
+                };
                 procs.push(Proc {
                     pid,
                     ppid,

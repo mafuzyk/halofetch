@@ -16,6 +16,7 @@ fn main() {
         .flatten()
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name != "README.md")
         .collect();
     entries.sort();
 

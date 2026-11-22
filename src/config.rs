@@ -12,8 +12,8 @@ use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::field::Field;
-use crate::info::SysInfo;
+use crate::field::{Field, Needed};
+use crate::info::{sanitize_text, SysInfo};
 use crate::logo::{self, LogoSet, LogoSource};
 use crate::theme::{Color, Gradient};
 
@@ -32,6 +32,11 @@ const MAX_SEPARATOR: usize = 4;
 const MAX_LABEL: usize = 24;
 const MAX_ICON: usize = 4;
 const MAX_PALETTE_NAME: usize = 32;
+const MIN_IMAGE_WIDTH: usize = 8;
+const MAX_IMAGE_WIDTH: usize = 200;
+const MIN_IMAGE_HEIGHT: usize = 4;
+const MAX_IMAGE_HEIGHT: usize = 80;
+const MAX_IMAGE_PATH: usize = 4096;
 /// Version 2 used 999 to mean "no limit on the value width".
 const LEGACY_UNLIMITED_WIDTH: usize = 999;
 /// Abbreviated labels written by versions 1 and 2.
@@ -130,6 +135,16 @@ impl IconSet {
     pub const ALL: [IconSet; 3] = [IconSet::Nerd, IconSet::Unicode, IconSet::None];
 }
 
+/// How an image logo is drawn. `Auto` picks the protocol from the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageProtocol {
+    #[default]
+    Auto,
+    Kitty,
+    None,
+}
+
 /// `layout.icons` as written now, or as the boolean that older versions used.
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -176,6 +191,19 @@ pub struct LogoConfig {
     pub source: LogoSource,
     pub gradient: Gradient,
     pub auto_small: bool,
+    /// Use the compact logo even when the full logo fits.
+    pub compact: bool,
+    pub image: ImageConfig,
+}
+
+/// An image logo drawn through a terminal graphics protocol. The size is in cells.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageConfig {
+    pub path: String,
+    pub width: usize,
+    pub height: usize,
+    pub protocol: ImageProtocol,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -317,6 +345,19 @@ impl Default for LogoConfig {
             source: LogoSource::default(),
             gradient: Gradient::default(),
             auto_small: true,
+            compact: false,
+            image: ImageConfig::default(),
+        }
+    }
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        ImageConfig {
+            path: String::new(),
+            width: 32,
+            height: 16,
+            protocol: ImageProtocol::Auto,
         }
     }
 }
@@ -587,9 +628,7 @@ impl Config {
         self.validate()?;
         fs::create_dir_all(config_parent(path)?)?;
         let json = serde_json::to_string_pretty(self)?;
-        let tmp = with_suffix(path, "tmp");
-        fs::write(&tmp, format!("{json}\n"))?;
-        fs::rename(&tmp, path)?;
+        crate::atomic::write(path, format!("{json}\n").as_bytes())?;
         Ok(())
     }
 
@@ -616,6 +655,15 @@ impl Config {
             && !(MIN_VALUE_WIDTH..=MAX_VALUE_WIDTH).contains(&self.layout.max_value_width)
         {
             bail!("layout.max_value_width must be 0 or between {MIN_VALUE_WIDTH} and {MAX_VALUE_WIDTH}");
+        }
+        if !(MIN_IMAGE_WIDTH..=MAX_IMAGE_WIDTH).contains(&self.logo.image.width) {
+            bail!("logo.image.width must be between {MIN_IMAGE_WIDTH} and {MAX_IMAGE_WIDTH}");
+        }
+        if !(MIN_IMAGE_HEIGHT..=MAX_IMAGE_HEIGHT).contains(&self.logo.image.height) {
+            bail!("logo.image.height must be between {MIN_IMAGE_HEIGHT} and {MAX_IMAGE_HEIGHT}");
+        }
+        if self.logo.image.path.chars().count() > MAX_IMAGE_PATH {
+            bail!("logo.image.path must be at most {MAX_IMAGE_PATH} characters");
         }
         if self.title.format.chars().count() > MAX_TITLE_FORMAT {
             bail!("title.format must be at most {MAX_TITLE_FORMAT} characters");
@@ -674,8 +722,20 @@ impl Config {
                 .max_value_width
                 .clamp(MIN_VALUE_WIDTH, MAX_VALUE_WIDTH);
         }
-        self.title.format = truncate_chars(&self.title.format, MAX_TITLE_FORMAT);
-        self.title.separator = truncate_chars(&self.title.separator, MAX_SEPARATOR);
+        self.logo.image.width = self
+            .logo
+            .image
+            .width
+            .clamp(MIN_IMAGE_WIDTH, MAX_IMAGE_WIDTH);
+        self.logo.image.height = self
+            .logo
+            .image
+            .height
+            .clamp(MIN_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT);
+        self.logo.image.path =
+            truncate_chars(&sanitize_text(&self.logo.image.path), MAX_IMAGE_PATH);
+        self.title.format = truncate_chars(&sanitize_text(&self.title.format), MAX_TITLE_FORMAT);
+        self.title.separator = truncate_chars(&sanitize_text(&self.title.separator), MAX_SEPARATOR);
 
         for entry in self
             .fields
@@ -683,8 +743,8 @@ impl Config {
             .iter_mut()
             .chain(self.fields.right.iter_mut())
         {
-            entry.label = truncate_chars(&entry.label, MAX_LABEL);
-            entry.icon = truncate_chars(&entry.icon, MAX_ICON);
+            entry.label = truncate_chars(&sanitize_text(&entry.label), MAX_LABEL);
+            entry.icon = truncate_chars(&sanitize_text(&entry.icon), MAX_ICON);
         }
         let mut seen = HashSet::new();
         self.fields.left.retain(|entry| seen.insert(entry.field));
@@ -692,7 +752,7 @@ impl Config {
 
         let mut palettes = BTreeMap::new();
         for (name, mut colors) in std::mem::take(&mut self.custom_palettes) {
-            let name = truncate_chars(name.trim(), MAX_PALETTE_NAME);
+            let name = truncate_chars(&sanitize_text(&name), MAX_PALETTE_NAME);
             if name.is_empty() || colors.is_empty() {
                 continue;
             }
@@ -703,12 +763,80 @@ impl Config {
     }
 
     pub fn logo_set(&self, info: &SysInfo) -> LogoSet {
-        logo::resolve(
+        let set = logo::resolve(
             &self.logo.source,
             &info.os_ids,
             user_logo_dir().as_deref(),
-            self.logo.auto_small,
-        )
+            self.logo.auto_small || self.logo.compact,
+        );
+        if self.logo.compact {
+            LogoSet {
+                full: set.small.or(set.full),
+                small: None,
+            }
+        } else {
+            set
+        }
+    }
+
+    /// Logos for the static fetch. When an image is configured and the terminal
+    /// supports it, a marker logo takes the place of the full logo; the original
+    /// character set remains available by resolving the configuration again.
+    pub fn fetch_logo_set(&self, info: &SysInfo) -> (LogoSet, Option<crate::image::ImageSource>) {
+        let supported = crate::image::terminal_supports_image()
+            || (self.logo.image.protocol == ImageProtocol::Kitty
+                && crate::image::stdout_is_terminal());
+        self.fetch_logo_set_with(info, true, supported)
+    }
+
+    fn fetch_logo_set_with(
+        &self,
+        info: &SysInfo,
+        allow_image: bool,
+        supported: bool,
+    ) -> (LogoSet, Option<crate::image::ImageSource>) {
+        let set = self.logo_set(info);
+        if !allow_image
+            || !supported
+            || self.logo.source == LogoSource::None
+            || self.logo.image.path.is_empty()
+            || self.logo.image.protocol == ImageProtocol::None
+        {
+            return (set, None);
+        }
+        let path = logo::expand_home(&self.logo.image.path);
+        if !path.is_file() {
+            return (set, None);
+        }
+
+        let columns = self.logo.image.width;
+        let rows = self.logo.image.height;
+        let source = crate::image::ImageSource {
+            path,
+            columns,
+            rows,
+        };
+        let mut set = set;
+        let fallback = set.small.take().or_else(|| set.full.take());
+        set.full = Some(crate::image::marker_logo(columns, rows));
+        set.small = fallback;
+        (set, Some(source))
+    }
+
+    /// Fields that the static fetch and the live monitor need to collect. The
+    /// title always needs user and host, even when they are not panel entries.
+    pub fn needed_fields(&self) -> Needed {
+        let mut needed = Needed::none();
+        for entry in self.fields.left.iter().chain(self.fields.right.iter()) {
+            if entry.enabled {
+                needed.insert(entry.field);
+            }
+        }
+        if self.title.enabled {
+            needed.insert(Field::User);
+            needed.insert(Field::Host);
+        }
+        needed
     }
 }
 
@@ -1163,6 +1291,83 @@ mod tests {
     }
 
     #[test]
+    fn normalize_sanitizes_escape_sequences() {
+        let mut config = Config::default();
+        config.title.format = "\x1b[31m{user}\x1b[0m\n@host".to_string();
+        config.title.separator = "\x1b[2K".to_string();
+        config.fields.left[0].label = "\x1b[1mOS\x1b[0m\n".to_string();
+        config.fields.left[0].icon = "\x1b]8;;x\x07*\x07".to_string();
+        config
+            .custom_palettes
+            .insert("\x1b[31mMine\x1b[0m".to_string(), vec![Color::WHITE]);
+
+        config.normalize();
+
+        assert_eq!(config.title.format, "{user} @host");
+        assert!(config.title.separator.is_empty());
+        assert_eq!(config.fields.left[0].label, "OS");
+        assert_eq!(config.fields.left[0].icon, "*");
+        assert!(config.custom_palettes.contains_key("Mine"));
+    }
+
+    #[test]
+    fn compact_logo_forces_the_small_variant() {
+        let mut config = Config::default();
+        config.logo.source = LogoSource::Builtin {
+            key: "arch".to_string(),
+        };
+        config.logo.compact = false;
+        let normal = config.logo_set(&SysInfo::default());
+        assert!(normal.small.is_some());
+
+        config.logo.compact = true;
+        let compact = config.logo_set(&SysInfo::default());
+        assert!(compact.small.is_none());
+        let full = compact.full.expect("compact logo");
+        assert_eq!(full.width, normal.small.expect("small logo").width);
+    }
+
+    #[test]
+    fn image_logo_replaces_the_full_logo_and_keeps_a_fallback() {
+        let mut config = Config::default();
+        config.logo.source = LogoSource::Builtin {
+            key: "arch".to_string(),
+        };
+        config.logo.image.path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml").to_string();
+        config.logo.image.width = 10;
+        config.logo.image.height = 4;
+
+        let (set, image) = config.fetch_logo_set_with(&SysInfo::default(), true, true);
+        let image = image.expect("image source");
+        assert_eq!((image.columns, image.rows), (10, 4));
+        let full = set.full.expect("marker logo");
+        assert_eq!(full.width, 10);
+        assert_eq!(full.lines.len(), 4);
+        assert!(full
+            .lines
+            .iter()
+            .all(|line| line.chars().all(|ch| ch == crate::image::MARKER)));
+        assert!(set.small.is_some());
+    }
+
+    #[test]
+    fn image_logo_falls_back_when_disabled_or_unsupported() {
+        let mut config = Config::default();
+        config.logo.image.path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml").to_string();
+
+        for (allow_image, supported) in [(false, true), (true, false)] {
+            let (set, image) =
+                config.fetch_logo_set_with(&SysInfo::default(), allow_image, supported);
+            assert!(image.is_none());
+            let full = set.full.expect("character logo");
+            assert!(!full
+                .lines
+                .iter()
+                .any(|line| line.contains(crate::image::MARKER)));
+        }
+    }
+
+    #[test]
     fn normalize_truncates_long_text() {
         let mut config = Config::default();
         config.title.format = "x".repeat(100);
@@ -1355,6 +1560,41 @@ mod tests {
         config.colors.palette.clear();
         assert!(config.save_to(&path).is_err());
         assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_preserves_the_existing_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new("save-permissions");
+        let path = scratch.file("config.json");
+        fs::write(&path, "{}\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        Config::default().save_to(&path).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_refuses_a_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = Scratch::new("save-symlink");
+        let target = scratch.file("target.json");
+        let link = scratch.file("config.json");
+        fs::write(&target, "original\n").unwrap();
+        symlink(&target, &link).unwrap();
+
+        assert!(Config::default().save_to(&link).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original\n");
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 
     #[test]

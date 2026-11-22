@@ -41,6 +41,34 @@ pub enum Field {
     Locale,
 }
 
+/// Set of fields a collection pass needs. Hidden fields do not pay their cost.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Needed(u64);
+
+impl Needed {
+    pub const fn none() -> Self {
+        Self(0)
+    }
+
+    pub const fn all() -> Self {
+        Self(u64::MAX)
+    }
+
+    pub fn insert(&mut self, field: Field) {
+        self.0 |= 1_u64 << (field as u32);
+    }
+
+    #[cfg_attr(windows, allow(dead_code))]
+    pub fn contains(self, field: Field) -> bool {
+        self.0 & (1_u64 << (field as u32)) != 0
+    }
+
+    #[cfg_attr(windows, allow(dead_code))]
+    pub fn any(self, fields: &[Field]) -> bool {
+        fields.iter().any(|field| self.contains(*field))
+    }
+}
+
 /// Section a field belongs to in the editor's add dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldGroup {

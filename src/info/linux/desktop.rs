@@ -4,7 +4,7 @@
 //! process names, so they can be tested without depending on the host.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{read_text, sorted_dir};
 use crate::info::env_value;
@@ -128,6 +128,7 @@ fn terminal_from(env: impl Fn(&str) -> Option<String>, chain: &[&str]) -> Option
             "WezTerm" => return Some("WezTerm".to_string()),
             "vscode" => return Some("VS Code".to_string()),
             "ghostty" => return Some("Ghostty".to_string()),
+            "koral" => return Some("Koral".to_string()),
             other => return Some(other.to_string()),
         }
     }
@@ -165,6 +166,7 @@ fn terminal_name(comm: &str) -> Option<&'static str> {
         "rxvt" => "rxvt",
         "xterm" => "xterm",
         "ghostty" => "Ghostty",
+        "koral" => "Koral",
         "contour" => "Contour",
         "rio" => "Rio",
         "warp" | "warp-terminal" => "Warp",
@@ -252,16 +254,18 @@ fn normalize_desktop(item: &str) -> Option<&'static str> {
     })
 }
 
-/// Font family from terminal configuration files. Each file is read at most once.
-pub(super) fn font() -> Option<String> {
+/// Font family from the running terminal's configuration, falling back to the
+/// first terminal whose configuration exists. Each file is read at most once.
+pub(super) fn font(terminal: Option<&str>) -> Option<String> {
     let home = super::home_dir()?;
     let config = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .unwrap_or_else(|| home.join(".config"));
 
-    let sources: [(PathBuf, FontParser); 9] = [
+    let mut sources: [(PathBuf, FontParser); 10] = [
         (config.join("kitty/kitty.conf"), parse_kitty),
+        (config.join("koral/config.sharky"), parse_koral),
         (config.join("alacritty/alacritty.toml"), parse_alacritty),
         (config.join("alacritty/alacritty.yml"), parse_alacritty),
         (config.join("wezterm/wezterm.lua"), parse_wezterm),
@@ -271,12 +275,35 @@ pub(super) fn font() -> Option<String> {
         (home.join(".Xdefaults"), parse_xresources),
         (config.join("konsolerc"), parse_konsole),
     ];
+    // A stable sort keeps the order of the remaining sources untouched.
+    sources.sort_by_key(|(path, _)| !preferred_source(path, terminal));
     sources
         .iter()
         .find_map(|(path, parse)| parse(&fs::read_to_string(path).ok()?))
 }
 
 type FontParser = fn(&str) -> Option<String>;
+
+/// Whether `path` is the configuration file of `terminal`.
+fn preferred_source(path: &Path, terminal: Option<&str>) -> bool {
+    let Some(terminal) = terminal else {
+        return false;
+    };
+    let file = path.to_string_lossy();
+    match terminal {
+        "kitty" => file.contains("kitty"),
+        "Koral" => file.contains("koral"),
+        "Alacritty" => file.contains("alacritty"),
+        "WezTerm" => file.contains("wezterm"),
+        "Ghostty" => file.contains("ghostty"),
+        "Foot" => file.contains("foot"),
+        "Konsole" => file.contains("konsolerc"),
+        "xterm" | "urxvt" | "rxvt" | "st" | "Linux console" => {
+            file.ends_with(".Xresources") || file.ends_with(".Xdefaults")
+        }
+        _ => false,
+    }
+}
 
 fn parse_kitty(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
@@ -285,6 +312,14 @@ fn parse_kitty(text: &str) -> Option<String> {
             return None;
         }
         clean_font(rest)
+    })
+}
+
+fn parse_koral(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("polyp font ")?;
+        let family = rest.trim().trim_matches('"').trim();
+        (!family.is_empty()).then(|| family.to_string())
     })
 }
 
@@ -299,10 +334,30 @@ fn parse_alacritty(text: &str) -> Option<String> {
 
 /// `wezterm.font("Name")` or `wezterm.font_with_fallback({"Name", ...})`.
 fn parse_wezterm(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let at = line.find("wezterm.font")?;
-        first_quoted(&line[at..])
-    })
+    let mut in_block = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if in_block {
+            if trimmed.contains("]]") {
+                in_block = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("--[[") {
+            in_block = !trimmed.contains("]]");
+            continue;
+        }
+        if trimmed.starts_with("--") {
+            continue;
+        }
+        let code = trimmed.split("--").next().unwrap_or(trimmed);
+        if let Some(at) = code.find("wezterm.font") {
+            if let Some(font) = first_quoted(&code[at..]) {
+                return Some(font);
+            }
+        }
+    }
+    None
 }
 
 fn first_quoted(text: &str) -> Option<String> {
@@ -520,6 +575,11 @@ mod tests {
         );
         assert_eq!(parse_kitty("font_family_bold Foo\n"), None);
         assert_eq!(
+            parse_koral("polyp font_size 11\npolyp font \"JetBrainsMono Nerd Font Mono\"\n")
+                .as_deref(),
+            Some("JetBrainsMono Nerd Font Mono")
+        );
+        assert_eq!(
             parse_alacritty("[font.normal]\nfamily = \"Iosevka\"\n").as_deref(),
             Some("Iosevka")
         );
@@ -530,6 +590,15 @@ mod tests {
         assert_eq!(
             parse_wezterm("config.font = wezterm.font(\"Fira Code\")\n").as_deref(),
             Some("Fira Code")
+        );
+        assert_eq!(
+            parse_wezterm("-- wezterm.font(\"Commented\")\nconfig.font = wezterm.font(\"Real\")\n")
+                .as_deref(),
+            Some("Real")
+        );
+        assert_eq!(
+            parse_wezterm("--[[\nwezterm.font(\"Blocked\")\n]]\n").as_deref(),
+            None
         );
         assert_eq!(
             parse_ghostty("font-family = Berkeley Mono\n").as_deref(),

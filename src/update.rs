@@ -52,6 +52,9 @@ fn update_from_source(source: &Path, executable: &Path) -> Result<()> {
     }
 
     println!("→ Installing to {}...", destination.display());
+    #[cfg(not(windows))]
+    replace_binary(&binary, &destination)?;
+    #[cfg(windows)]
     install_binary(&binary, &destination)?;
     println!("Updated to latest version!");
     Ok(())
@@ -172,23 +175,6 @@ fn run_command(command: &mut Command, label: &str) -> Result<()> {
         .map_err(|error| color_eyre::eyre::eyre!("failed to run {label}: {error}"))?;
     if !status.success() {
         bail!("{label} failed with {status}");
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn install_binary(binary: &Path, destination: &Path) -> Result<()> {
-    if !binary.is_file() {
-        bail!("release build did not produce {}", binary.display());
-    }
-
-    let status = Command::new("install")
-        .args(["-m", "755"])
-        .arg(binary)
-        .arg(destination)
-        .status()?;
-    if !status.success() {
-        bail!("failed to install HaloFetch to {}", destination.display());
     }
     Ok(())
 }
@@ -506,18 +492,15 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The new binary is copied beside the installed one and renamed over it, so the
+/// The new binary is written beside the installed one and renamed over it, so the
 /// installed file is never partly written.
 #[cfg(not(windows))]
 fn replace_binary(binary: &Path, destination: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let staged = destination.with_file_name(".halofetch.new");
-    let replaced = std::fs::copy(binary, &staged)
-        .and_then(|_| std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)))
-        .and_then(|()| std::fs::rename(&staged, destination));
-    if let Err(error) = replaced {
-        let _ = std::fs::remove_file(&staged);
+    if !binary.is_file() {
+        bail!("the update did not produce {}", binary.display());
+    }
+    let contents = std::fs::read(binary)?;
+    if let Err(error) = crate::atomic::write_executable(destination, &contents) {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             let dir = destination.parent().unwrap_or(destination);
             bail!(

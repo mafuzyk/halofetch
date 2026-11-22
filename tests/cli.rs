@@ -98,3 +98,119 @@ fn error_reports_are_for_users() {
     assert!(!stderr.contains("RUST_BACKTRACE"), "{stderr}");
     assert!(!has_escapes(&output.stderr), "{stderr}");
 }
+
+#[test]
+fn only_enabled_fields_are_collected_and_serialized() {
+    let home = scratch_home("enabled-fields");
+    std::fs::create_dir_all(&home).unwrap();
+    let config = home.join("config.json");
+    std::fs::write(
+        &config,
+        r#"{
+            "version": 3,
+            "title": {"enabled": false},
+            "logo": {"source": {"kind": "none"}},
+            "fields": {
+                "left": [
+                    {"field": "os", "label": "OS", "icon": "", "enabled": true, "bar": false},
+                    {"field": "kernel", "label": "Kernel", "icon": "", "enabled": true, "bar": false}
+                ],
+                "right": []
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let output = halofetch(
+        "enabled-fields",
+        &[
+            "--config",
+            config.to_str().unwrap(),
+            "--format",
+            "json",
+            "fetch",
+        ],
+        false,
+    );
+    assert!(output.status.success(), "{output:?}");
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut keys: Vec<&str> = document["system"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["kernel", "os"]);
+
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn importing_a_second_inline_logo_keeps_a_backup() {
+    let home = scratch_home("import-backup");
+    std::fs::create_dir_all(&home).unwrap();
+    let config = home.join("config.json");
+    let source = home.join("fastfetch.jsonc");
+    std::fs::write(
+        &source,
+        r#"{"logo": {"type": "data", "source": "AAA"}, "modules": ["os"]}"#,
+    )
+    .unwrap();
+
+    for data in ["AAA", "BBB"] {
+        std::fs::write(
+            &source,
+            format!(r#"{{"logo": {{"type": "data", "source": "{data}"}}, "modules": ["os"]}}"#),
+        )
+        .unwrap();
+        let output = halofetch(
+            "import-backup",
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "config",
+                "import-fastfetch",
+                source.to_str().unwrap(),
+            ],
+            false,
+        );
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    let logo = home.join("logos/fastfetch-logo.txt");
+    let backup = home.join("logos/fastfetch-logo.txt.bak");
+    assert_eq!(std::fs::read_to_string(&logo).unwrap(), "BBB\n");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), "AAA\n");
+    assert!(config.with_extension("json.bak").exists());
+
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn init_installs_and_removes_an_interactive_hook() {
+    let home = scratch_home("init-hook");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let install = halofetch("init-hook", &["init", "bash"], false);
+    assert!(install.status.success(), "{install:?}");
+    let bashrc = home.join(".bashrc");
+    let content = std::fs::read_to_string(&bashrc).unwrap();
+    assert!(content.contains("case $- in"));
+    assert!(content.contains("command -v halofetch"));
+
+    let remove = halofetch("init-hook", &["init", "bash", "--remove"], false);
+    assert!(remove.status.success(), "{remove:?}");
+    assert!(!std::fs::read_to_string(&bashrc)
+        .unwrap()
+        .contains(">>> halofetch >>>"));
+
+    let fish = halofetch("init-hook", &["init", "fish"], false);
+    assert!(fish.status.success(), "{fish:?}");
+    let fish_config = home.join("fish/config.fish");
+    assert!(std::fs::read_to_string(&fish_config)
+        .unwrap()
+        .contains("status is-interactive"));
+
+    std::fs::remove_dir_all(home).unwrap();
+}

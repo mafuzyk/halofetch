@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::Scene;
+use crate::init::Shell;
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum OutputFormat {
@@ -58,6 +59,15 @@ pub enum Command {
         #[arg(long)]
         release: bool,
     },
+    /// Install or remove the startup hook that prints the fetch
+    Init {
+        /// Shell whose startup file receives the hook
+        #[arg(value_enum)]
+        shell: Shell,
+        /// Remove the hook instead of adding it
+        #[arg(long)]
+        remove: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +78,14 @@ pub enum ConfigAction {
     Path,
     /// Move the configuration aside and open the editor with defaults
     Reset,
+    /// Convert a fastfetch config.jsonc into the halofetch configuration
+    ImportFastfetch {
+        /// Fastfetch configuration file [default: the standard fastfetch path]
+        file: Option<PathBuf>,
+        /// Report what would be written without changing the configuration
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -114,6 +132,10 @@ pub struct Args {
     /// Scene to render: classic, side, or dashboard [default: configured scene]
     #[arg(long, value_parser = parse_scene, global = true, value_name = "SCENE")]
     pub scene: Option<Scene>,
+
+    /// Draw this PNG in place of the logo (Kitty graphics protocol)
+    #[arg(long, global = true, value_name = "PATH")]
+    pub image: Option<PathBuf>,
 
     /// Open the configuration editor (same as `config`)
     #[arg(short = 'i', long = "setup", hide = true)]
@@ -247,5 +269,47 @@ mod tests {
         assert_eq!(args.preset.as_deref(), Some("agender"));
         assert!(args.just_ascii);
         assert!(parse(&["halofetch", "-i"]).setup);
+    }
+
+    #[test]
+    fn image_flag_is_global() {
+        let before = parse(&["halofetch", "--image", "logo.png", "fetch"]);
+        assert_eq!(before.image, Some(PathBuf::from("logo.png")));
+        let after = parse(&["halofetch", "fetch", "--image", "logo.png"]);
+        assert_eq!(after.image, Some(PathBuf::from("logo.png")));
+    }
+
+    #[test]
+    fn init_and_fastfetch_import_commands_parse() {
+        let init = parse(&["halofetch", "init", "sharky"]);
+        assert!(matches!(
+            init.command,
+            Some(Command::Init {
+                shell: Shell::Sharky,
+                remove: false
+            })
+        ));
+        let remove = parse(&["halofetch", "init", "bash", "--remove"]);
+        assert!(matches!(
+            remove.command,
+            Some(Command::Init {
+                shell: Shell::Bash,
+                remove: true
+            })
+        ));
+
+        let import = parse(&[
+            "halofetch",
+            "config",
+            "import-fastfetch",
+            "ff.jsonc",
+            "--dry-run",
+        ]);
+        assert!(matches!(
+            import.command,
+            Some(Command::Config {
+                action: Some(ConfigAction::ImportFastfetch { dry_run: true, .. })
+            })
+        ));
     }
 }
