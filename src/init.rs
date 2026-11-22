@@ -340,15 +340,16 @@ mod tests {
             config_path(Shell::Zsh, home, Some(xdg), Some(sharky), None),
             home.join(".zshrc")
         );
+        let zdotdir = std::env::temp_dir().join("halofetch-zdotdir");
         assert_eq!(
             config_path(
                 Shell::Zsh,
                 home,
                 Some(xdg),
                 Some(sharky),
-                Some(Path::new("/home/test/zdot"))
+                Some(zdotdir.as_path())
             ),
-            Path::new("/home/test/zdot/.zshrc")
+            zdotdir.join(".zshrc")
         );
         assert_eq!(
             config_path(Shell::Zsh, home, None, None, Some(Path::new("relative"))),
