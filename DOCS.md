@@ -28,11 +28,17 @@ Objetivos da versão 3:
 | `src/field.rs` | Catálogo dos 32 campos: chaves, rótulos, ícones, grupos, descrições, gauges e campos ao vivo |
 | `src/info/mod.rs` | `SysInfo`, `Gauges`, `collect` (detecção única), `refresh_live` (leituras do monitor) e formatação dos valores; escolhe o backend de cada plataforma |
 | `src/info/linux/` | Backend Linux: `system.rs`, `hardware.rs`, `desktop.rs`, `network.rs`, `packages.rs`, `power.rs` e `procs.rs` (uma única varredura de `/proc`, usada por shell, terminal, DE, WM e contagem de processos) |
+| `src/info/linux/nix.rs` | Contagem de pacotes Nix pelos manifestos de perfil, com uma única consulta de referências ao `nix-store` |
+| `src/info/linux/command.rs` | Execução de comandos externos com prazo, kill e leitura de stdout em thread separada |
 | `src/info/windows/` | Backend Windows: chamadas Win32, registro do Windows e um wrapper seguro do registro em `registry.rs`. Veja a seção [Windows](#windows) |
 | `src/render/mod.rs` | Canvas de texto estilizado (`Line`, `Span`, `Style`), largura de texto e conversões para ANSI, texto puro e ratatui |
 | `src/render/scene.rs` | As cenas `classic`, `side` e `dashboard` e seus fallbacks |
 | `src/render/blocks.rs` | Linhas de informação, barras, gauges, título e faixa de cores da paleta |
 | `src/logo.rs` | Descoberta, limpeza, resolução e colorização dos logos |
+| `src/image.rs` | Protocolo de imagens Kitty, validação de PNG e marcadores de layout |
+| `src/fastfetch.rs` | Importação de configurações JSONC do fastfetch |
+| `src/init.rs` | Instalação e remoção de ganchos de inicialização para sharky, bash, zsh e fish |
+| `src/atomic.rs` | Gravação atômica com temporário exclusivo, `fsync` e preservação de permissões |
 | `src/theme.rs` | Paletas embutidas, gradientes e cor de contraste para texto sobre cor |
 | `src/tui/mod.rs` | Ciclo de vida do terminal do editor e gravação do logo colado |
 | `src/tui/app.rs` | Estado do editor, tratamento de eventos e regras de edição (sem desenho) |
@@ -80,6 +86,8 @@ Comandos:
 | `fetch [-w] [-i MS]` | Imprime uma renderização estática e encerra. Com `-w` (`--watch`), redesenha a cena no lugar até `q`, `Esc` ou `Ctrl+C`; `-i` define o intervalo, de 100 a 60000 ms, e o padrão é `startup.interval_ms` |
 | `monitor [-i MS]` | Abre o workspace ao vivo; intervalo de 100 a 60000 ms, padrão `startup.interval_ms` |
 | `config [edit\|path\|reset]` | Abre o editor (padrão), mostra o caminho ou move o arquivo para `.bak` e abre o editor com os padrões |
+| `config import-fastfetch [ARQUIVO] [--dry-run]` | Converte uma configuração JSONC do fastfetch, faz backup dos arquivos existentes e relata campos mapeados, ignorados e avisos |
+| `init sharky\|bash\|zsh\|fish [--remove]` | Instala ou remove um bloco guardado por interatividade no arquivo de inicialização do shell |
 | `preset list` / `preset apply NOME` | Lista paletas embutidas e personalizadas; aplica uma delas a `colors.palette` e grava |
 | `logos list` / `logos show [CHAVE]` | Lista as chaves; mostra um logo colorido pela paleta atual (sem chave, o logo configurado para esta máquina) |
 | `benchmark [-n N]` | Mede N execuções (1 a 100, padrão 5) |
@@ -89,9 +97,10 @@ Opções globais, aceitas antes ou depois do comando:
 
 | Opção | Efeito |
 |---|---|
-| `-c, --config CAMINHO` | Usa outro arquivo de configuração. Ele precisa existir, exceto nos comandos que o escrevem (`config`, `preset apply` e as formas antigas `--setup`, `--reset` e `--preset`) |
+| `-c, --config CAMINHO` | Usa outro arquivo de configuração. Ele precisa existir, exceto nos comandos que o escrevem ou não o leem (`config`, `init`, `preset apply` e as formas antigas `--setup`, `--reset` e `--preset`) |
 | `--format ansi\|json` | Formato da saída; `json` imprime o esquema versão 2 |
 | `--scene CENA` | Cena desta execução apenas (`classic`, `side`, `dashboard`) |
+| `--image CAMINHO` | Substitui o caminho do logo por imagem somente na renderização estática. É recusado em JSON, `--watch` e `monitor`, porque esses modos não desenham imagens |
 
 Formas antigas, ocultas em `--help` mas ainda aceitas:
 
@@ -120,8 +129,8 @@ Quando a saída não é um terminal, a largura vem de `COLUMNS` e, sem ela, vale
 
 ### Duas passagens
 
-- `collect()` faz a detecção completa uma vez. Não falha, não dorme e não trava: cada coletor devolve `None` quando não consegue ler. Parte dos coletores roda em threads (varredura de processos, pacotes, GPU, Wi-Fi e fonte).
-- `refresh_live()` relê apenas o que muda entre quadros: uptime, carga, processos, memória, swap, disco, bateria, temperatura, brilho, uso de CPU e uso de GPU. Não cria processos. O uso de CPU precisa de duas amostras de `/proc/stat` no mesmo `CpuSampler`; a primeira chamada deixa o valor vazio.
+- `collect()` faz a detecção completa uma vez. `collect_for(needed)` faz só os campos pedidos; o fetch estático, o monitor e o JSON usam `Config::needed_fields`, e o título acrescenta `user` e `host`. O editor e o benchmark continuam usando `collect()`. Não falha, não dorme e não trava: cada coletor devolve `None` quando não consegue ler, e comandos externos (Nix, gerenciadores de pacotes e `iwgetid`) têm prazo e são encerrados ao estourar. Parte dos coletores roda em threads (varredura de processos, pacotes, GPU, Wi-Fi e fonte).
+- `refresh_live()` relê apenas o que muda entre quadros e está habilitado: uptime, carga, processos, memória, swap, disco, bateria, temperatura, brilho, uso de CPU e uso de GPU. Não cria processos. O uso de CPU precisa de duas amostras de `/proc/stat` no mesmo `CpuSampler`; a primeira chamada deixa o valor vazio.
 
 ### Formatação
 
@@ -155,16 +164,16 @@ A tabela a seguir descreve o backend Linux (`src/info/linux/`). O backend Window
 | | `terminal` | ancestrais do processo e variáveis como `KITTY_WINDOW_ID` e `WEZTERM_EXECUTABLE` |
 | | `de`, `wm` | `XDG_CURRENT_DESKTOP`, variáveis de sessão, sockets do WM e nomes de processos conhecidos |
 | | `resolution` | modos anunciados por conectores em `/sys/class/drm` |
-| | `font` | configuração do kitty, alacritty, wezterm, ghostty, foot, Xresources, Xdefaults e konsole |
+| | `font` | configuração do kitty, Koral, alacritty, wezterm, ghostty, foot, Xresources, Xdefaults e konsole |
 | `network.rs` | `local_ip` | `getifaddrs`; interfaces físicas antes das demais, e as virtuais (docker, veth, tun, tailscale etc.) por último |
 | | `wifi` | `/proc/net/wireless` (interface e nível); o nome da rede vem de `iwgetid -r` |
-| `packages.rs` | `packages` | pacman (`/var/lib/pacman/local`), dpkg (`/var/lib/dpkg/status`), apk, xbps (`xbps-query -l`), rpm (`rpm -qa`), portage (`/var/db/pkg`), nix (`nix-store -qR`) |
+| `packages.rs` | `packages` | pacman (`/var/lib/pacman/local`), dpkg (`/var/lib/dpkg/status`), apk, xbps (`xbps-query -l`), rpm (`rpm -qa`), portage (`/var/db/pkg`); Nix por `nix.rs`, que lê os manifestos dos perfis, canonicaliza os roots e consulta as referências diretas uma vez |
 | | `flatpak`, `snap` | diretórios `app` do Flatpak do sistema e do usuário; entradas de `/snap` |
 | `power.rs` | `battery` | `/sys/class/power_supply`, dispositivo do tipo `Battery` com capacidade |
 | | `brightness` | `/sys/class/backlight` |
 | `procs.rs` | `processes`, cadeia de ancestrais | uma varredura de `/proc` compartilhada |
 
-Na detecção, os únicos comandos externos são `iwgetid`, `xbps-query`, `rpm` e `nix-store`. Cada um só roda quando o diretório do gerenciador correspondente existe, ou, no caso de `iwgetid`, quando há uma interface Wi-Fi.
+Na detecção, os únicos comandos externos são `iwgetid`, `xbps-query`, `rpm`, `nix-store` e, para pacotes Nix, a consulta de referências descrita acima. Cada um só roda quando o diretório do gerenciador correspondente existe, ou, no caso de `iwgetid`, quando há uma interface Wi-Fi. Nix e pacotes têm prazo de 1,5 s; `iwgetid` tem 500 ms. O prazo cobre também processos netos que mantenham o pipe aberto.
 
 Regras ao adicionar um coletor:
 
@@ -238,7 +247,13 @@ Config
 │   │                    {"kind": "file", "path": "~/logo.txt"}
 │   │                    {"kind": "none"}
 │   ├── gradient         "horizontal" | "vertical"
-│   └── auto_small       true                 (usa a variante _small em terminais estreitos)
+│   ├── auto_small       true                 (usa a variante _small em terminais estreitos)
+│   ├── compact          false                (força a variante compacta mesmo quando a cheia cabe)
+│   └── image
+│       ├── path         ""                   (até 4096 caracteres; vazio desliga)
+│       ├── width        32                   (8 a 200 células)
+│       ├── height       16                   (4 a 80 células)
+│       └── protocol     "auto" | "kitty" | "none"
 ├── colors
 │   ├── palette          ["#C084FC", ...]     (1 a 16 cores; padrão do amethyst)
 │   ├── title            "#FF9A98"
@@ -284,6 +299,9 @@ Há duas etapas, com papéis diferentes:
 | `layout.gap`, `layout.padding` | limitados a 20 | no máximo 20 |
 | `layout.cascade` | limitado a 10 | no máximo 10 |
 | `layout.max_value_width` | 0 fica como está; outros valores limitados a 8..200 | 0 ou 8..200 |
+| `logo.image.path` | aparado, controles removidos e truncado a 4096 caracteres | no máximo 4096 caracteres |
+| `logo.image.width` | limitado a 8..200 | 8..200 |
+| `logo.image.height` | limitado a 4..80 | 4..80 |
 | `title.format` | truncado a 64 caracteres | no máximo 64 caracteres |
 | `title.separator` | truncado a 4 caracteres | no máximo 4 caracteres |
 | rótulo e ícone de campo | truncados a 24 e 4 caracteres | no máximo 24 e 4 |
@@ -294,7 +312,7 @@ Os limites de texto e de número são as constantes de `config.rs`.
 
 ### Gravação
 
-`Config::save` valida, cria o diretório, grava `config.json.tmp` com o JSON formatado e renomeia o temporário para o destino. A renomeação no mesmo sistema de arquivos substitui o arquivo de uma vez. Uma configuração inválida não grava nada.
+`Config::save_to` valida, cria o diretório e entrega o JSON formatado a `atomic::write`. Ele cria um temporário exclusivo com nome imprevisível no mesmo diretório, copia a permissão do arquivo existente (ou usa `0600`), grava, sincroniza e renomeia sobre o destino. A renomeação no mesmo sistema de arquivos substitui o arquivo de uma vez; um link simbólico no destino é recusado em vez de seguido. Uma configuração inválida não grava nada.
 
 ### Carregamento, migração e quarentena
 
@@ -414,6 +432,61 @@ Para uma chave, um arquivo em `<diretório da configuração>/logos/` vence o lo
 
 A colorização (`logo::colorize`) pinta cada célula visível com a paleta, em faixas contíguas. Com `horizontal`, as faixas seguem as linhas; com `vertical`, as colunas. Espaços e espaços braille não recebem cor. A bandeira intersex é um caso especial (um anel roxo sobre fundo amarelo).
 
+## Imagem do logo
+
+`logo.image` permite usar um PNG no lugar do logo de caracteres na renderização estática. O caminho é expandido com `~`, o tamanho é reservado em células (`width` × `height`) e a imagem é desenhada pelo protocolo Kitty. O layout usa um logo de marcadores com a mesma largura e altura, então as cenas posicionam a imagem sem código especial.
+
+Detecção do protocolo:
+
+- `protocol: "auto"` procura `TERM_PROGRAM` (`koral`, `ghostty`, `WezTerm`), `TERM=xterm-kitty`, `KITTY_WINDOW_ID` ou `WEZTERM_PANE`. Sem um terminal reconhecido, a imagem não é usada;
+- `protocol: "kitty"` força o protocolo quando stdout é um terminal, para terminais que implementam Kitty sem se anunciar no ambiente;
+- `protocol: "none"` desliga a imagem.
+
+O caminho vazio, o arquivo ausente, a fonte `logo.source: none` e qualquer falha de leitura mantêm o logo de caracteres. O mesmo vale para uma falha ao desenhar: `image::render` devolve erro antes de emitir a sequência e `main` redesenha a cena com o logo original. Assim, um PNG inválido nunca apaga o logo.
+
+Antes de codificar, `validate_png` confere a assinatura, os limites e o CRC de cada chunk, exige `IHDR` com dimensões de até 16384 e tipo de cor suportado, exige ao menos um `IDAT` e um `IEND`. O arquivo é limitado a 16 MiB. A validação também é usada pelo editor ao editar o caminho.
+
+A sequência é dividida em chunks APC de até 4096 caracteres base64, com `a=T,f=100,c=COLUNAS,r=LINHAS,z=-1,C=1,q=2` e um id estável derivado do caminho. O marcador `U+10FFFD` é substituído pela sequência no canto superior esquerdo do retângulo reservado; os demais marcadores viram espaços. `image::validate_file` é a entrada pública usada pelo editor e pelos testes.
+
+`halofetch --image CAMINHO fetch` troca apenas `logo.image.path`. O protocolo e o tamanho configurados continuam valendo, e a flag não liga uma imagem desligada por `protocol: "none"`. A flag é recusada em `--format json`, `fetch --watch` e `monitor`, porque a saída JSON e as telas ao vivo não desenham imagens.
+
+## Importação do fastfetch
+
+`halofetch config import-fastfetch [ARQUIVO]` lê JSONC (comentários de linha e de bloco, vírgulas finais), sem executar nada do arquivo. Sem argumento, usa `~/.config/fastfetch/config.jsonc` ou `%APPDATA%\fastfetch\config.jsonc`. O destino é a configuração ativa (`--config` ou o caminho padrão).
+
+Mapeamento principal:
+
+| fastfetch | halofetch |
+|---|---|
+| `logo.source` de arquivo ou embutido | `logo.source` `file` ou `builtin` |
+| `display.padding` | `layout.padding` |
+| `display.color.keys`, `display.color.separator`, `display.color.title` | `colors.value`, `colors.separator`, `colors.title` |
+| `modules` com `{type: "title", format}` | `title.format` |
+| `modules` | entradas em `fields.left` e `fields.right`, na ordem do arquivo |
+| `logo.type: "small"` | `logo.compact: true` |
+| `logo.type: "data"` com `source` | arquivo `logos/fastfetch-logo.txt`, colorido pela paleta |
+
+`logo.padding` não é importado e gera aviso, porque o padding do logo não tem equivalente. Os placeholders de `logo.color` são removidos do desenho inline e também geram aviso; o halofetch aplica a paleta ao logo salvo.
+
+O relatório separa os módulos mapeados, os ignorados e os avisos. Um módulo desconhecido ou sem campo equivalente é ignorado com o nome original, nunca traduzido para outro campo. Protocolos de imagem (`sixel`, `iterm`, `chafa`, `raw`) geram aviso porque o renderizador só implementa Kitty. `--dry-run` faz toda a leitura, o mapeamento e a validação, imprime o relatório e não grava configuração nem logo.
+
+Antes de sobrescrever, o importador cria backups numerados (`config.json.bak`, `.bak.1`, `.bak.2` etc.) para a configuração e para `logos/fastfetch-logo.txt`. A gravação usa `atomic::write`, então uma falha no meio do caminho não deixa um arquivo truncado.
+
+## Ganchos de shell
+
+`halofetch init SHELL` instala um bloco delimitado em:
+
+| Shell | Arquivo |
+|---|---|
+| sharky | `$SHARKY_CONFIG/config.sharky`, `$XDG_CONFIG_HOME/sharky/config.sharky` ou `~/.config/sharky/config.sharky` |
+| bash | `~/.bashrc` |
+| zsh | `$ZDOTDIR/.zshrc` ou `~/.zshrc` |
+| fish | `$XDG_CONFIG_HOME/fish/config.fish` ou `~/.config/fish/config.fish` |
+
+O bloco só executa `halofetch fetch` em shell interativo: `case $- in *i*)` para bash e zsh, `status is-interactive` para fish, e `wake "halofetch"` no sharky. Todos conferem se `halofetch` existe (`command -v`, ou `command -q` no fish) e nunca iniciam o monitor dentro do shell embutido. Instalar quando o bloco já existe não duplica nada. `--remove` apaga apenas as linhas entre os marcadores `>>> halofetch >>>` e `<<< halofetch <<<`, preservando o restante do arquivo.
+
+O arquivo é lido e gravado com `atomic::write`, e um link simbólico no destino é recusado. Os testes executam bash e fish reais para verificar a sintaxe e a guarda de interatividade, verificam o snippet do sharky com `sharky --check` quando ele está instalado, e testam o ida e volta de instalação e remoção.
+
 ## Editor
 
 ### Arquitetura
@@ -529,7 +602,7 @@ O workspace precisa de terminal interativo; sem ele, `monitor` falha com uma men
 - `system`: cada campo presente, como texto de exibição, na ordem de `Field::ALL` (uma implementação manual de `Serialize`; um `BTreeMap` reordenaria as chaves);
 - `gauges`: os valores numéricos medidos, com as chaves `memory`, `swap`, `disk` e `vram` (objetos com `used` e `total` em bytes e `percent`), e `cpu_percent`, `gpu_percent`, `cpu_temp_celsius`, `battery_percent` e `brightness_percent`, com duas casas decimais. Chaves sem valor são omitidas.
 
-`cpu_percent` e `gpu_percent` só vêm do `refresh_live`, então a saída estática não as contém. O JSON ignora a configuração de painéis e a cena. Ao mudar o conteúdo do JSON, aumente `SCHEMA_VERSION` e registre a mudança; é o contrato com scripts.
+`cpu_percent` e `gpu_percent` só vêm do `refresh_live`, então a saída estática não as contém. O JSON contém apenas os campos habilitados na configuração, mais `user` e `host` quando o título está habilitado; a cena não altera o conjunto. Ao mudar as chaves ou os tipos do JSON, aumente `SCHEMA_VERSION` e registre a mudança; é o contrato com scripts.
 
 ## Benchmark
 

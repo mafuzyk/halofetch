@@ -20,6 +20,9 @@ State of the project, written so work can continue from a fresh session.
 - JSON output (`--format json`) is `schema_version` 2 with `system` and `gauges`.
 - Colors go to a capable terminal only. `FORCE_COLOR` keeps them in a pipe; `NO_COLOR` always wins.
 - A `--config` path must exist unless the command writes it.
+- Image logos use the Kitty graphics protocol in the static fetch only, with the original character logo as fallback. PNG files are checked before encoding.
+- `halofetch config import-fastfetch` reads JSONC, backs up the configuration and inline logo, and only imports Kitty images.
+- `halofetch init sharky|bash|zsh|fish` installs an interactive startup hook with `atomic::write`.
 - `panic = "abort"` stays off the release profile: `LiveTerminal` and `WatchTerminal` restore the terminal in `Drop`.
 - `vt100` stays on 0.15: 0.18 needs `NonZeroU16` sizes and has no advisory forcing the move.
 - The project and the binary are named `halofetch` (`halofetch.exe` on Windows). The configuration directory `atlasfetch` is moved to `halofetch` on first run, and `ATLASFETCH_SRC` is still read as a fallback for `HALOFETCH_SRC`.
@@ -36,12 +39,16 @@ State of the project, written so work can continue from a fresh session.
 | `src/render/blocks.rs` | Info rows (powerline and plain, mirrored for the left panel), bars, gauges, color blocks, title. |
 | `src/render/scene.rs` | Scene composition. Classic centers the logo and fits both panels with a water-filling width split, falling back to a stacked layout. |
 | `src/config.rs` | Config v3, validation, normalization, migration, paths (`~/.config/halofetch`, `%APPDATA%\halofetch`). |
+| `src/atomic.rs` | Atomic replacement with exclusive temporary files, `fsync`, mode preservation and symlink refusal. |
 | `src/logo.rs` | Embedded logos (built by `build.rs` from `logos/`), detection, file logos, coloring. |
+| `src/image.rs` | Kitty graphics, PNG validation and image-marker layout. |
+| `src/fastfetch.rs` | fastfetch JSONC importer. |
+| `src/init.rs` | Startup hook installation for sharky, bash, zsh and fish. |
 | `src/theme.rs` | Palettes, gradients, contrast. |
 | `src/tui/` | Config editor: `app.rs` state and events, `view.rs` drawing, `input.rs` text input, `clipboard.rs` (Windows only). |
 | `src/live.rs` | `monitor`: scene refreshed in place above an embedded shell (portable-pty + vt100). |
 | `src/update.rs` | Self-update from a source checkout or the latest release binary. |
-| `src/main.rs`, `src/cli.rs` | Subcommands `fetch`, `monitor`, `config`, `preset`, `logos`, `benchmark`, `update`. |
+| `src/main.rs`, `src/cli.rs` | Subcommands `fetch`, `monitor`, `config`, `init`, `preset`, `logos`, `benchmark`, `update`. |
 
 The TUI is tested by feeding synthetic events to `App` and checking state and the rendered buffer; follow that pattern for new editor behavior.
 
@@ -92,6 +99,7 @@ New fix: the monitor's shell pane border was misdrawn because empty vt100 cells 
 Still open:
 
 - `fetch --watch` and `monitor` read the VRAM usage once at startup; the live refresh does not update it (same as Linux).
+- Image logos are drawn only by the static fetch. `fetch --watch`, `monitor` and JSON keep the character logo.
 - VRAM on machines with two GPUs: used is the largest PDH adapter value and total the largest registry adapter, which may be different adapters.
 - Package count on Windows covers scoop and choco only; `winget list` takes seconds, so it would have to be an opt-in field.
 - Existing config files keep their saved `cascade` value, so the new default only applies to new files.
@@ -102,10 +110,8 @@ Parked until the open items above are done. In order of expected payoff:
 
 1. `--format svg` (then PNG/HTML): export the scene from the span canvas in `src/render/mod.rs`, so sharing does not depend on terminal screenshots.
 2. A scene that is really live in `monitor` and `fetch --watch`: CPU/memory history sparklines in the dashboard and an animated logo gradient.
-3. `halofetch init <shell>`: install the startup hook in the PowerShell/bash/zsh/fish profile instead of asking the user to edit it.
-4. `preset export` / `preset import`: one shareable file with palette, layout and fields.
-5. Palette picked from the wallpaper or from the terminal theme.
-6. Image logos (sixel/kitty). Low priority: a lot of work and fastfetch already does it.
+3. `preset export` / `preset import`: one shareable file with palette, layout and fields.
+4. Palette picked from the wallpaper or from the terminal theme.
 
 Distribution comes last: crates.io, winget, scoop. The AUR package will be published by the maintainer.
 
