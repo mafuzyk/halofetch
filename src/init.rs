@@ -313,7 +313,8 @@ mod tests {
     #[test]
     fn paths_resolve_per_shell() {
         let home = Path::new("/home/test");
-        let xdg = Path::new("/custom/xdg");
+        let xdg = std::env::temp_dir().join("halofetch-xdg");
+        let xdg = xdg.as_path();
         let sharky = Path::new("/custom/sharky");
 
         assert_eq!(
