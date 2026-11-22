@@ -1,7 +1,7 @@
 # Maintainer: mafuzyk <mafuzyk@gmail.com>
 
 pkgname=halofetch
-pkgver=3.2.0
+pkgver=3.3.0
 pkgrel=1
 pkgdesc="System information fetch with centered logos, panels and a live monitor"
 arch=('x86_64')
@@ -11,7 +11,7 @@ depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
 optdepends=('wireless_tools: show the Wi-Fi network name')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('32731f04bba23fcf065e26526aa3cab9ec629c271b60e0fbbd1b6061284367c2')
+sha256sums=('73b4b4befeb2c0b8314d6991c79894396cf407b561712f77d42eb9fe3d862c2b')
 
 prepare() {
   cd "$pkgname-$pkgver"
@@ -32,5 +32,8 @@ package() {
   cd "$pkgname-$pkgver"
   install -Dm755 target/release/halofetch "$pkgdir/usr/bin/halofetch"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
   install -Dm644 DOCS.md "$pkgdir/usr/share/doc/$pkgname/DOCS.md"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 logos/README.md "$pkgdir/usr/share/doc/$pkgname/logo-provenance.md"
 }
