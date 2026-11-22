@@ -92,7 +92,7 @@ The flake exposes the package and can be added to a NixOS or Home Manager config
 Each release publishes a static musl build (`x86_64-unknown-linux-musl`), a glibc build (`x86_64-unknown-linux-gnu`) and a Windows archive, each with a SHA-256 file:
 
 ```bash
-version=v3.2.0
+version=v3.3.0
 archive=halofetch-$version-x86_64-unknown-linux-musl.tar.gz
 curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive"
 curl -fLO "https://github.com/mafuzyk/halofetch/releases/download/$version/$archive.sha256"
